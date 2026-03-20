@@ -1,0 +1,25 @@
+ticker,company,yfinance_ticker,shares,buy_price,purchase_date
+MA,Mastercard Inc,MA,2,531.97,2026-01-29
+AMZN,Amazon.com Inc,AMZN,5,196.86,2025-03-12
+AMZN,Amazon.com Inc,AMZN,4,230.54,2026-01-20
+AMZN,Amazon.com Inc,AMZN,3,205.20,2026-02-06
+MSFT,Microsoft Corp,MSFT,2,429.89,2026-01-29
+MSFT,Microsoft Corp,MSFT,1,417.57,2026-02-04
+MSFT,Microsoft Corp,MSFT,3,404.47,2026-02-09
+SPGI,S&P Global Inc,SPGI,3,453.62,2026-02-04
+SPGI,S&P Global Inc,SPGI,2,366.24,2026-02-10
+AMD,Advanced Micro Devices,AMD,5,121.69,2025-01-02
+NVO,Novo Nordisk A/S,NVO,13,74.45,2025-03-12
+NVO,Novo Nordisk A/S,NVO,12,63.05,2025-04-16
+JD,JD.com Inc,JD,30,34.54,2025-04-23
+DUOL,Duolingo Inc,DUOL,4,119.61,2026-02-09
+GOOGL,Alphabet Inc Class A,GOOGL,3,90.05,2023-02-27
+GOOGL,Alphabet Inc Class A,GOOGL,3,92.11,2023-03-11
+LRCX,Lam Research Corp,LRCX,9,77.56,2024-10-15
+IWDA,iShares Core MSCI World ETF,IWDA.AS,3,72.68,2023-02-27
+IWDA,iShares Core MSCI World ETF,IWDA.AS,5,101.45,2025-03-05
+META,Meta Platforms Inc,META,3,651.71,2026-02-25
+TTD,Trade Desk Inc,TTD,16,36.26,2026-01-16
+S,SentinelOne Inc,S,50,14.09,2026-01-29
+NOW,ServiceNow Inc,NOW,5,107.52,2026-02-11
+BY6,BYD Ord Shs H,BY6.F,65,7.50,2024-06-16

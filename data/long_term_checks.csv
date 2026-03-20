@@ -1,0 +1,14 @@
+plan_name,period_label,period_date,planned_value,actual_value,deviation,completion_pct,note_plan,note_assets,next_step,source,is_manual_override
+2027,2026-03-19,2600000.0,,,,,,,,manual,False
+39 to 50,2026,2026-12-31,2689553.91,,,,Automaticky vygenerovano z kalkulacky,,,auto,False
+39 to 50,2027,2027-12-31,3159668.87,,,,Automaticky vygenerovano z kalkulacky,,,auto,False
+39 to 50,2028,2028-12-31,3679011.01,,,,Automaticky vygenerovano z kalkulacky,,,auto,False
+39 to 50,2029,2029-12-31,4252735.06,,,,Automaticky vygenerovano z kalkulacky,,,auto,False
+39 to 50,2030,2030-12-31,4886535.51,,,,Automaticky vygenerovano z kalkulacky,,,auto,False
+39 to 50,2031,2031-12-31,5586703.15,,,,Automaticky vygenerovano z kalkulacky,,,auto,False
+39 to 50,2032,2032-12-31,6360187.5,,,,Automaticky vygenerovano z kalkulacky,,,auto,False
+39 to 50,2033,2033-12-31,7214665.76,,,,Automaticky vygenerovano z kalkulacky,,,auto,False
+39 to 50,2034,2034-12-31,8158619.07,,,,Automaticky vygenerovano z kalkulacky,,,auto,False
+39 to 50,2035,2035-12-31,9201416.62,,,,Automaticky vygenerovano z kalkulacky,,,auto,False
+39 to 50,2036,2036-12-31,10353408.7,,,,Automaticky vygenerovano z kalkulacky,,,auto,False
+39 to 50,2037,2037-12-31,11626029.4,,,,Automaticky vygenerovano z kalkulacky,,,auto,False

@@ -1,0 +1,10 @@
+ticker,company,yfinance_ticker,buy_zone_low,buy_zone_high,buy_plan,sell_target,note_date,note_price,note_text
+SOFI,SoFi Technologies Inc,SOFI,12.0,15.0,13.5,,2026-03-19,16.8,Buy zone 12-15 from screenshot
+NU,Nu Holdings Ltd,NU,12.0,12.0,12.0,28.0,2026-03-19,13.81,
+HOOD,Robinhood Markets Inc,HOOD,66.0,70.0,70.0,,2026-03-19,72.46,Support around 66 and buy around 70
+CEZ,CEZ AS,CEZ.PR,40.0,40.0,40.0,,2026-03-19,49.8,Buy around 40 EUR
+V,Visa Inc,V,280.0,280.0,280.0,,2026-03-19,299.43,Buy around 280 near support
+BTG,B2Gold Corp,BTG,3.7,4.2,3.95,,2026-03-19,4.15,Buy zone 3.7 to 4.2
+NFLX,Netflix Inc,NFLX,45.0,55.0,50.0,,2026-03-19,94.1,Approximate buy zone from screenshot
+ANET,Arista Networks Inc,ANET,85.0,102.0,93.5,,2026-03-19,133.18,Approximate buy zone from screenshot
+PLTR,Palantir Technologies Inc,PLTR,70.0,90.0,80.0,,2026-03-19,151.16,Approximate buy zone from screenshot

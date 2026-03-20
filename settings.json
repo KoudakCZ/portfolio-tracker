@@ -1,0 +1,24 @@
+{
+  "language": "cs",
+  "base_currency": "EUR",
+  "date_format": "DD.MM.YYYY",
+  "visible_columns": [
+    "Ticker",
+    "Spolecnost",
+    "Aktualni hodnota",
+    "Denni pohyb %",
+    "Denni pohyb",
+    "Pocet",
+    "Nakupni cena",
+    "1 Year",
+    "Current Value",
+    "Kapitalovy zisk",
+    "% Zisk",
+    "PE",
+    "EPS",
+    "Earnings Yield",
+    "Market Cap",
+    "Beta"
+  ],
+  "theme": "dark"
+}
