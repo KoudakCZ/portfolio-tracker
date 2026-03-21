@@ -142,12 +142,22 @@ TEXTS = {
 
 def load_portfolio() -> pd.DataFrame:
     # Nacte portfolio ze stejneho CSV souboru.
-    df = pd.read_csv(CSV_PATH)
+    try:
+        df = pd.read_csv(CSV_PATH)
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        return pd.DataFrame(columns=["ticker", "company", "yfinance_ticker", "shares", "buy_price", "purchase_date"])
+
+    for column in ["ticker", "company", "yfinance_ticker", "shares", "buy_price", "purchase_date"]:
+        if column not in df.columns:
+            df[column] = ""
     df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
+    df["shares"] = pd.to_numeric(df["shares"], errors="coerce").fillna(0.0)
+    df["buy_price"] = pd.to_numeric(df["buy_price"], errors="coerce").fillna(0.0)
     if "purchase_date" not in df.columns:
         df["purchase_date"] = ""
     if "yfinance_ticker" not in df.columns:
         df["yfinance_ticker"] = df["ticker"]
+    df["yfinance_ticker"] = df["yfinance_ticker"].fillna(df["ticker"]).replace("", pd.NA).fillna(df["ticker"])
     return df
 
 
@@ -208,7 +218,7 @@ def load_transactions(raw_df: pd.DataFrame) -> pd.DataFrame:
     # Nacte transakce nebo je jednorazove vytvori z portfolio.csv.
     try:
         df = pd.read_csv(TRANSACTIONS_PATH)
-    except FileNotFoundError:
+    except (FileNotFoundError, pd.errors.EmptyDataError):
         df = create_transactions_from_portfolio(raw_df)
         if len(df) > 0:
             save_transactions(df)
@@ -246,8 +256,12 @@ def load_transactions(raw_df: pd.DataFrame) -> pd.DataFrame:
     if len(df) > 0:
         df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
         df["transaction_type"] = df["transaction_type"].astype(str).str.lower().str.strip()
-        df["currency"] = df["currency"].astype(str).str.upper().str.strip().replace("", "USD")
-        df["tax_currency"] = df["tax_currency"].astype(str).str.upper().str.strip().replace("", "CZK")
+        df["currency"] = df["currency"].apply(lambda value: str(value).upper().strip() if pd.notna(value) else "")
+        df["currency"] = df["currency"].replace(["", "NAN", "NONE"], "USD")
+        df["tax_currency"] = df["tax_currency"].apply(lambda value: str(value).upper().strip() if pd.notna(value) else "")
+        df["tax_currency"] = df["tax_currency"].replace(["", "NAN", "NONE"], "CZK")
+        for text_column in ["company", "broker", "note"]:
+            df[text_column] = df[text_column].fillna("").replace("nan", "")
         for numeric_column in ["quantity", "price", "buy_fee", "sell_fee", "fx_fee", "tax_fx_rate"]:
             df[numeric_column] = pd.to_numeric(df[numeric_column], errors="coerce")
     return df
@@ -257,7 +271,7 @@ def load_watchlist() -> pd.DataFrame:
     # Nacte watchlist ze samostatneho CSV souboru.
     try:
         df = pd.read_csv(WATCHLIST_PATH)
-    except FileNotFoundError:
+    except (FileNotFoundError, pd.errors.EmptyDataError):
         return pd.DataFrame(
             columns=[
                 "ticker",
@@ -273,10 +287,17 @@ def load_watchlist() -> pd.DataFrame:
             ]
         )
 
+    for column in ["ticker", "company", "yfinance_ticker", "buy_zone_low", "buy_zone_high", "buy_plan", "sell_target", "note_date", "note_price", "note_text"]:
+        if column not in df.columns:
+            df[column] = ""
+
     if len(df) > 0:
         df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
         if "yfinance_ticker" not in df.columns:
             df["yfinance_ticker"] = df["ticker"]
+        df["yfinance_ticker"] = df["yfinance_ticker"].fillna(df["ticker"]).replace("", pd.NA).fillna(df["ticker"])
+        for numeric_column in ["buy_zone_low", "buy_zone_high", "buy_plan", "sell_target", "note_price"]:
+            df[numeric_column] = pd.to_numeric(df[numeric_column], errors="coerce")
     return df
 
 
@@ -284,7 +305,7 @@ def load_analysis() -> pd.DataFrame:
     # Nacte aktualni analyzu a plan pro tickery.
     try:
         df = pd.read_csv(ANALYSIS_PATH)
-    except FileNotFoundError:
+    except (FileNotFoundError, pd.errors.EmptyDataError):
         return pd.DataFrame(
             columns=[
                 "ticker",
@@ -330,7 +351,7 @@ def load_analysis_history() -> pd.DataFrame:
     # Nacte historii rozhodnuti po jednotlivych zaznamech.
     try:
         df = pd.read_csv(ANALYSIS_HISTORY_PATH)
-    except FileNotFoundError:
+    except (FileNotFoundError, pd.errors.EmptyDataError):
         return pd.DataFrame(
             columns=[
                 "ticker",
@@ -342,8 +363,13 @@ def load_analysis_history() -> pd.DataFrame:
             ]
         )
 
+    for column in ["ticker", "decision_date", "decision_type", "price", "plan_text", "comment"]:
+        if column not in df.columns:
+            df[column] = ""
+
     if len(df) > 0:
         df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
+        df["price"] = pd.to_numeric(df["price"], errors="coerce")
     return df
 
 
@@ -351,7 +377,7 @@ def load_long_term_plans() -> pd.DataFrame:
     # Nacte seznam dlouhodobych planu.
     try:
         df = pd.read_csv(LONG_TERM_PLANS_PATH)
-    except FileNotFoundError:
+    except (FileNotFoundError, pd.errors.EmptyDataError):
         return pd.DataFrame(
             columns=[
                 "plan_name",
@@ -365,6 +391,11 @@ def load_long_term_plans() -> pd.DataFrame:
                 "asset_notes",
             ]
         )
+    for column in ["plan_name", "start_period", "target_period", "start_value", "target_value", "monthly_contribution", "expected_return_pct", "plan_notes", "asset_notes"]:
+        if column not in df.columns:
+            df[column] = ""
+    for numeric_column in ["start_value", "target_value", "monthly_contribution", "expected_return_pct"]:
+        df[numeric_column] = pd.to_numeric(df[numeric_column], errors="coerce")
     return df
 
 
@@ -372,7 +403,7 @@ def load_long_term_checks() -> pd.DataFrame:
     # Nacte kontroly dlouhodobeho planu po jednotlivych obdobich.
     try:
         df = pd.read_csv(LONG_TERM_CHECKS_PATH)
-    except FileNotFoundError:
+    except (FileNotFoundError, pd.errors.EmptyDataError):
         return pd.DataFrame(
             columns=[
                 "plan_name",
@@ -389,6 +420,9 @@ def load_long_term_checks() -> pd.DataFrame:
                 "is_manual_override",
             ]
         )
+    for column in ["plan_name", "period_label", "period_date", "planned_value", "actual_value", "deviation", "completion_pct", "note_plan", "note_assets", "next_step", "source", "is_manual_override"]:
+        if column not in df.columns:
+            df[column] = ""
     if "note" in df.columns and "note_plan" not in df.columns:
         df["note_plan"] = df["note"]
     for column in [
@@ -404,6 +438,8 @@ def load_long_term_checks() -> pd.DataFrame:
             df[column] = ""
     if "source" in df.columns:
         df["source"] = df["source"].replace("", "manual").fillna("manual")
+    for numeric_column in ["planned_value", "actual_value", "deviation", "completion_pct"]:
+        df[numeric_column] = pd.to_numeric(df[numeric_column], errors="coerce")
     if "is_manual_override" in df.columns:
         df["is_manual_override"] = (
             df["is_manual_override"]
@@ -427,6 +463,14 @@ def load_settings() -> dict:
 
     settings = DEFAULT_SETTINGS.copy()
     settings.update(saved_settings)
+    if settings.get("language") not in ["cs", "en"]:
+        settings["language"] = DEFAULT_SETTINGS["language"]
+    if settings.get("base_currency") not in ["USD", "EUR", "CZK"]:
+        settings["base_currency"] = DEFAULT_SETTINGS["base_currency"]
+    if settings.get("date_format") not in DATE_FORMATS:
+        settings["date_format"] = DEFAULT_SETTINGS["date_format"]
+    if settings.get("theme") not in ["dark", "light"]:
+        settings["theme"] = DEFAULT_SETTINGS["theme"]
 
     # Jednoducha migrace starsich nazvu sloupcu v nastaveni.
     if "visible_columns" in settings:
@@ -817,7 +861,7 @@ def convert_history_to_usd(history_df: pd.DataFrame, currency: str) -> pd.DataFr
         return history_df
 
     if currency == "EUR":
-        fx_df = get_price_history("EURUSD=X", "1y")
+        fx_df = get_price_history("EURUSD=X", "max")
         if fx_df.empty:
             return pd.DataFrame()
 
@@ -825,6 +869,17 @@ def convert_history_to_usd(history_df: pd.DataFrame, currency: str) -> pd.DataFr
         merged = history_df.merge(fx_df, on="Date", how="left")
         merged["fx_close"] = merged["fx_close"].ffill().bfill()
         merged["close"] = merged["close"] * merged["fx_close"]
+        return merged[["Date", "close"]]
+
+    if currency == "CZK":
+        fx_df = get_price_history("USDCZK=X", "max")
+        if fx_df.empty:
+            return pd.DataFrame()
+
+        fx_df = fx_df.rename(columns={"close": "fx_close"})
+        merged = history_df.merge(fx_df, on="Date", how="left")
+        merged["fx_close"] = merged["fx_close"].ffill().bfill()
+        merged["close"] = merged["close"] / merged["fx_close"]
         return merged[["Date", "close"]]
 
     return history_df
@@ -870,7 +925,7 @@ def build_portfolio_history(raw_df: pd.DataFrame, period: str) -> tuple[pd.DataF
     if not all_series:
         return pd.DataFrame(), missing_tickers
 
-    combined = pd.concat(all_series, axis=1).sort_index().fillna(method="ffill").fillna(0.0)
+    combined = pd.concat(all_series, axis=1).sort_index().ffill().fillna(0.0)
     combined["portfolio_value"] = combined.sum(axis=1)
     return combined.reset_index()[["Date", "portfolio_value"]], sorted(set(missing_tickers))
 
@@ -1010,6 +1065,26 @@ def calculate_combined_performance_pct(
     return clean_pct + realized_pct
 
 
+def calculate_clean_performance_value(
+    clean_performance_pct: float | None,
+    start_value_usd: float | None,
+) -> float | None:
+    # Prevede cisty vykon z procent i do penezni hodnoty za stejne obdobi.
+    if clean_performance_pct is None or start_value_usd in (None, 0):
+        return None
+    return start_value_usd * (clean_performance_pct / 100)
+
+
+def calculate_combined_performance_value(
+    clean_performance_value_usd: float | None,
+    realized_result_usd: float,
+) -> float | None:
+    # Penezni varianta cisteho vykonu vcetne uzavrenych pozic.
+    if clean_performance_value_usd is None:
+        return None
+    return clean_performance_value_usd + realized_result_usd
+
+
 def build_portfolio_cash_flows(raw_df: pd.DataFrame) -> pd.DataFrame:
     # Sestavi externi cash flow podle trzni hodnoty pozice v den zarazeni do historie.
     if len(raw_df) == 0 or "purchase_date" not in raw_df.columns:
@@ -1125,14 +1200,14 @@ def build_report_performance_rows(
     previous_years = [today.year - 1, today.year - 2, today.year - 3]
 
     rows = [
-        {"Obdobi": "Dnes", "value_change_usd": total_daily_change_usd, "value_change_pct": total_daily_change_pct, "clean_performance_pct": None, "clean_with_closed_pct": None, "spy_pct": None, "msci_pct": None},
-        {"Obdobi": "Od zacatku tydne", "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_with_closed_pct": None, "spy_pct": None, "msci_pct": None},
-        {"Obdobi": "Od zacatku mesice", "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_with_closed_pct": None, "spy_pct": None, "msci_pct": None},
-        {"Obdobi": "Od zacatku roku", "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_with_closed_pct": None, "spy_pct": None, "msci_pct": None},
-        {"Obdobi": str(previous_years[0]), "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_with_closed_pct": None, "spy_pct": None, "msci_pct": None},
-        {"Obdobi": str(previous_years[1]), "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_with_closed_pct": None, "spy_pct": None, "msci_pct": None},
-        {"Obdobi": str(previous_years[2]), "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_with_closed_pct": None, "spy_pct": None, "msci_pct": None},
-        {"Obdobi": "Od nakupu", "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_with_closed_pct": None, "spy_pct": None, "msci_pct": None},
+        {"Obdobi": "Dnes", "value_change_usd": total_daily_change_usd, "value_change_pct": total_daily_change_pct, "clean_performance_pct": None, "clean_performance_value_usd": None, "clean_with_closed_pct": None, "clean_with_closed_value_usd": None, "spy_pct": None, "msci_pct": None},
+        {"Obdobi": "Od zacatku tydne", "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_performance_value_usd": None, "clean_with_closed_pct": None, "clean_with_closed_value_usd": None, "spy_pct": None, "msci_pct": None},
+        {"Obdobi": "Od zacatku mesice", "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_performance_value_usd": None, "clean_with_closed_pct": None, "clean_with_closed_value_usd": None, "spy_pct": None, "msci_pct": None},
+        {"Obdobi": "Od zacatku roku", "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_performance_value_usd": None, "clean_with_closed_pct": None, "clean_with_closed_value_usd": None, "spy_pct": None, "msci_pct": None},
+        {"Obdobi": str(previous_years[0]), "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_performance_value_usd": None, "clean_with_closed_pct": None, "clean_with_closed_value_usd": None, "spy_pct": None, "msci_pct": None},
+        {"Obdobi": str(previous_years[1]), "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_performance_value_usd": None, "clean_with_closed_pct": None, "clean_with_closed_value_usd": None, "spy_pct": None, "msci_pct": None},
+        {"Obdobi": str(previous_years[2]), "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_performance_value_usd": None, "clean_with_closed_pct": None, "clean_with_closed_value_usd": None, "spy_pct": None, "msci_pct": None},
+        {"Obdobi": "Od nakupu", "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_performance_value_usd": None, "clean_with_closed_pct": None, "clean_with_closed_value_usd": None, "spy_pct": None, "msci_pct": None},
     ]
 
     anchor_dates = [start_of_week, start_of_month, start_of_year]
@@ -1143,7 +1218,15 @@ def build_report_performance_rows(
         rows[index]["value_change_pct"] = percent
         rows[index]["clean_performance_pct"] = calculate_clean_performance_from_date(clean_history_df, anchor_date)
         period_start_value = get_period_start_value(history_df, anchor_date)
+        rows[index]["clean_performance_value_usd"] = calculate_clean_performance_value(
+            rows[index]["clean_performance_pct"],
+            period_start_value,
+        )
         realized_result = calculate_realized_result_between_dates(closed_positions_df, anchor_date)
+        rows[index]["clean_with_closed_value_usd"] = calculate_combined_performance_value(
+            rows[index]["clean_performance_value_usd"],
+            realized_result,
+        )
         rows[index]["clean_with_closed_pct"] = calculate_combined_performance_pct(
             rows[index]["clean_performance_pct"],
             realized_result,
@@ -1160,7 +1243,15 @@ def build_report_performance_rows(
         rows[offset]["value_change_pct"] = percent
         rows[offset]["clean_performance_pct"] = calculate_clean_performance_between_dates(clean_history_df, year_start, year_end)
         period_start_value = get_period_start_value(history_df, year_start, year_end)
+        rows[offset]["clean_performance_value_usd"] = calculate_clean_performance_value(
+            rows[offset]["clean_performance_pct"],
+            period_start_value,
+        )
         realized_result = calculate_realized_result_between_dates(closed_positions_df, year_start, year_end)
+        rows[offset]["clean_with_closed_value_usd"] = calculate_combined_performance_value(
+            rows[offset]["clean_performance_value_usd"],
+            realized_result,
+        )
         rows[offset]["clean_with_closed_pct"] = calculate_combined_performance_pct(
             rows[offset]["clean_performance_pct"],
             realized_result,
@@ -1178,7 +1269,15 @@ def build_report_performance_rows(
         start_date_all,
     ) if start_date_all is not None else None
     period_start_value = get_period_start_value(history_df, start_date_all) if start_date_all is not None else None
+    rows[7]["clean_performance_value_usd"] = calculate_clean_performance_value(
+        rows[7]["clean_performance_pct"],
+        period_start_value,
+    )
     realized_result = calculate_realized_result_between_dates(closed_positions_df, start_date_all) if start_date_all is not None else 0.0
+    rows[7]["clean_with_closed_value_usd"] = calculate_combined_performance_value(
+        rows[7]["clean_performance_value_usd"],
+        realized_result,
+    )
     rows[7]["clean_with_closed_pct"] = calculate_combined_performance_pct(
         rows[7]["clean_performance_pct"],
         realized_result,
@@ -1195,7 +1294,15 @@ def build_report_performance_rows(
         if last_factor not in (None, 0) and previous_factor is not None:
             rows[0]["clean_performance_pct"] = ((last_factor / previous_factor) - 1) * 100
     previous_day_start = get_period_start_value(history_df, today - pd.Timedelta(days=1))
+    rows[0]["clean_performance_value_usd"] = calculate_clean_performance_value(
+        rows[0]["clean_performance_pct"],
+        previous_day_start,
+    )
     today_realized_result = calculate_realized_result_between_dates(closed_positions_df, today, today)
+    rows[0]["clean_with_closed_value_usd"] = calculate_combined_performance_value(
+        rows[0]["clean_performance_value_usd"],
+        today_realized_result,
+    )
     rows[0]["clean_with_closed_pct"] = calculate_combined_performance_pct(
         rows[0]["clean_performance_pct"],
         today_realized_result,
@@ -1654,7 +1761,7 @@ def build_watchlist_overview(watchlist_df: pd.DataFrame) -> pd.DataFrame:
         rows.append(
             {
                 "Ticker": row.ticker,
-                "Spolecnost": row.company if pd.notna(row.company) else company_live if company_live else "N/A",
+                "Spolecnost": row.company if pd.notna(row.company) and str(row.company).strip() else company_live if company_live else "N/A",
                 "Aktualni cena": format_price_with_currency(current_price, currency),
                 "Buy zone": f"{format_number(row.buy_zone_low)} - {format_number(row.buy_zone_high)}",
                 "Plan nakupu": format_number(row.buy_plan),
@@ -1662,10 +1769,26 @@ def build_watchlist_overview(watchlist_df: pd.DataFrame) -> pd.DataFrame:
                 "Status": status,
                 "Vzdalenost od buy zony": format_number(distance_pct, " %"),
                 "Poznamka": f"{format_date_display(row.note_date, date_format_label)} / {format_number(row.note_price)} / {row.note_text if pd.notna(row.note_text) and row.note_text else 'N/A'}",
+                "_current_price_value": current_price,
+                "_buy_plan_value": row.buy_plan,
+                "_watchlist_status": status,
             }
         )
 
     return pd.DataFrame(rows)
+
+
+def style_watchlist_row(row: pd.Series) -> list[str]:
+    # Zvýrazni radky, kde se cena dostala do nakupni oblasti.
+    current_price = row.get("_current_price_value")
+    buy_plan = row.get("_buy_plan_value")
+    status = row.get("_watchlist_status")
+
+    if pd.notna(current_price) and pd.notna(buy_plan) and current_price <= buy_plan:
+        return ["background-color: rgba(34, 197, 94, 0.22); border-left: 3px solid #22c55e"] * len(row)
+    if status in ["V nakupni zone", "Pod nakupni zonou"]:
+        return ["background-color: rgba(34, 197, 94, 0.12)"] * len(row)
+    return [""] * len(row)
 
 
 def get_analysis_ticker_options(raw_df: pd.DataFrame, watchlist_df: pd.DataFrame, analysis_df: pd.DataFrame) -> list[str]:
@@ -1723,6 +1846,26 @@ def format_status_badge(status: str) -> str:
     return status_map.get(status, status)
 
 
+def format_status_badge(status: str) -> str:
+    # Oprava rozbiteho kodovani ve status badge.
+    if not status or status == "nan":
+        return "N/A"
+    status_map = {
+        "Building": "Building",
+        "Hold": "Hold",
+        "Review": "Review",
+        "Trim": "Trim",
+        "Exit": "Exit",
+    }
+    return status_map.get(status, status)
+
+
+def safe_number_input_value(value, default: float = 0.0) -> float:
+    # Bezpecny fallback pro Streamlit number_input.
+    numeric_value = safe_float(value)
+    return default if numeric_value is None else float(numeric_value)
+
+
 def build_analysis_overview(raw_df: pd.DataFrame, analysis_df: pd.DataFrame, base_currency: str) -> pd.DataFrame:
     # Sestavi prehled vsech vlastnenych firem pro sekci analyza.
     holdings_df = aggregate_portfolio(raw_df)
@@ -1756,7 +1899,12 @@ def build_analysis_overview(raw_df: pd.DataFrame, analysis_df: pd.DataFrame, bas
         rows.append(
             {
                 "Ticker": row.ticker,
-                "Spolecnost": plan_row.get("company", row.company if pd.notna(row.company) else "N/A") or "N/A",
+                "Spolecnost": (
+                    plan_row.get("company")
+                    if pd.notna(plan_row.get("company", None)) and str(plan_row.get("company", "")).strip()
+                    else row.company if pd.notna(row.company) and str(row.company).strip()
+                    else "N/A"
+                ),
                 "Aktualni cena": current_price_text,
                 "Prumerna nakupni cena": format_number(avg_buy_price),
                 "Cilova cena": format_number(target_price),
@@ -1848,9 +1996,9 @@ def generate_long_term_checks(
         raise ValueError("U planu chybi platny startovni nebo cilovy rok.")
 
     schedule = build_future_value_schedule(
-        float(selected_plan.get("start_value", 0.0) or 0.0),
-        float(selected_plan.get("monthly_contribution", 0.0) or 0.0),
-        float(selected_plan.get("expected_return_pct", 0.0) or 0.0),
+        safe_number_input_value(selected_plan.get("start_value", 0.0)),
+        safe_number_input_value(selected_plan.get("monthly_contribution", 0.0)),
+        safe_number_input_value(selected_plan.get("expected_return_pct", 0.0)),
         start_year,
         target_year,
     )
@@ -2046,7 +2194,13 @@ if current_page == t("watchlist", language):
     with watchlist_overview_tab:
         overview_df = build_watchlist_overview(watchlist_df)
         if len(overview_df) > 0:
-            st.dataframe(overview_df, use_container_width=True, hide_index=True)
+            helper_columns = ["_current_price_value", "_buy_plan_value", "_watchlist_status"]
+            visible_overview_df = overview_df.drop(columns=helper_columns, errors="ignore")
+            styled_overview_df = visible_overview_df.style.apply(
+                lambda row: style_watchlist_row(overview_df.loc[row.name])[0:len(row)],
+                axis=1,
+            )
+            st.dataframe(styled_overview_df, use_container_width=True, hide_index=True)
         else:
             st.info("Watchlist je prazdny.")
 
@@ -2106,19 +2260,20 @@ if current_page == t("watchlist", language):
 
             with st.form("watchlist_edit_form"):
                 edit_watch_ticker = st.text_input("Ticker ", value=str(selected_watch_row["ticker"]))
-                edit_buy_zone_low = st.number_input("Buy zone od ", min_value=0.0, value=float(selected_watch_row["buy_zone_low"]), step=0.01)
-                edit_buy_zone_high = st.number_input("Buy zone do ", min_value=0.0, value=float(selected_watch_row["buy_zone_high"]), step=0.01)
-                edit_buy_plan = st.number_input("Plan nakupu ", min_value=0.0, value=float(selected_watch_row["buy_plan"]), step=0.01)
-                edit_sell_target = st.number_input("Plan prodeje ", min_value=0.0, value=float(selected_watch_row["sell_target"]), step=0.01)
+                edit_buy_zone_low = st.number_input("Buy zone od ", min_value=0.0, value=safe_number_input_value(selected_watch_row["buy_zone_low"]), step=0.01)
+                edit_buy_zone_high = st.number_input("Buy zone do ", min_value=0.0, value=safe_number_input_value(selected_watch_row["buy_zone_high"]), step=0.01)
+                edit_buy_plan = st.number_input("Plan nakupu ", min_value=0.0, value=safe_number_input_value(selected_watch_row["buy_plan"]), step=0.01)
+                edit_sell_target = st.number_input("Plan prodeje ", min_value=0.0, value=safe_number_input_value(selected_watch_row["sell_target"]), step=0.01)
                 edit_note_date = st.date_input("Datum poznamky ", value=watch_note_date_value.date())
-                edit_note_price = st.number_input("Cena v poznamce ", min_value=0.0, value=float(selected_watch_row["note_price"]), step=0.01)
+                edit_note_price = st.number_input("Cena v poznamce ", min_value=0.0, value=safe_number_input_value(selected_watch_row["note_price"]), step=0.01)
                 edit_note_text = st.text_input("Poznamka ", value=str(selected_watch_row["note_text"]) if pd.notna(selected_watch_row["note_text"]) else "")
                 watch_edit_button = st.form_submit_button("Ulozit")
 
                 if watch_edit_button:
                     clean_ticker = edit_watch_ticker.strip().upper()
+                    existing_yfinance = selected_watch_row["yfinance_ticker"] if pd.notna(selected_watch_row.get("yfinance_ticker", None)) and str(selected_watch_row.get("yfinance_ticker", "")).strip() else clean_ticker
                     watchlist_df.loc[selected_watch_edit_index, "ticker"] = clean_ticker
-                    watchlist_df.loc[selected_watch_edit_index, "yfinance_ticker"] = clean_ticker
+                    watchlist_df.loc[selected_watch_edit_index, "yfinance_ticker"] = existing_yfinance if clean_ticker == str(selected_watch_row["ticker"]).strip().upper() else clean_ticker
                     watchlist_df.loc[selected_watch_edit_index, "buy_zone_low"] = float(edit_buy_zone_low)
                     watchlist_df.loc[selected_watch_edit_index, "buy_zone_high"] = float(edit_buy_zone_high)
                     watchlist_df.loc[selected_watch_edit_index, "buy_plan"] = float(edit_buy_plan)
@@ -2372,9 +2527,9 @@ if current_page == t("long_term_plan", language):
 
     st.subheader("Financni kalkulacka budouci hodnoty")
     calc_col1, calc_col2, calc_col3, calc_col4 = st.columns(4)
-    calc_start_value = calc_col1.number_input("Start value", min_value=0.0, value=float(selected_plan.get("start_value", 0.0) or 0.0), step=100.0)
-    calc_monthly_contribution = calc_col2.number_input("Mesicni vklad", min_value=0.0, value=float(selected_plan.get("monthly_contribution", 0.0) or 0.0), step=50.0)
-    calc_expected_return = calc_col3.number_input("Vynos %", min_value=0.0, value=float(selected_plan.get("expected_return_pct", 0.0) or 0.0), step=0.5)
+    calc_start_value = calc_col1.number_input("Start value", min_value=0.0, value=safe_number_input_value(selected_plan.get("start_value", 0.0)), step=100.0)
+    calc_monthly_contribution = calc_col2.number_input("Mesicni vklad", min_value=0.0, value=safe_number_input_value(selected_plan.get("monthly_contribution", 0.0)), step=50.0)
+    calc_expected_return = calc_col3.number_input("Vynos %", min_value=0.0, value=safe_number_input_value(selected_plan.get("expected_return_pct", 0.0)), step=0.5)
     calculated_years = 10.0
     start_year_for_calc = extract_year(selected_plan.get("start_period", ""))
     target_year_for_calc = extract_year(selected_plan.get("target_period", ""))
@@ -2392,10 +2547,10 @@ if current_page == t("long_term_plan", language):
             plan_name = st.text_input("Nazev planu", value=str(selected_plan.get("plan_name", "")))
             start_period = st.text_input("Zacatek obdobi", value=str(selected_plan.get("start_period", "")), placeholder="Napriklad 2026")
             target_period = st.text_input("Cilove obdobi", value=str(selected_plan.get("target_period", "")), placeholder="Napriklad 2030")
-            start_value = st.number_input("Stav na zacatku", min_value=0.0, value=float(selected_plan.get("start_value", 0.0) or 0.0), step=100.0)
-            target_value = st.number_input("Planovany stav", min_value=0.0, value=float(selected_plan.get("target_value", 0.0) or 0.0), step=100.0)
-            monthly_contribution = st.number_input("Mesicni vklad", min_value=0.0, value=float(selected_plan.get("monthly_contribution", 0.0) or 0.0), step=50.0)
-            expected_return_pct = st.number_input("Ocekavany vynos %", min_value=0.0, value=float(selected_plan.get("expected_return_pct", 0.0) or 0.0), step=0.5)
+            start_value = st.number_input("Stav na zacatku", min_value=0.0, value=safe_number_input_value(selected_plan.get("start_value", 0.0)), step=100.0)
+            target_value = st.number_input("Planovany stav", min_value=0.0, value=safe_number_input_value(selected_plan.get("target_value", 0.0)), step=100.0)
+            monthly_contribution = st.number_input("Mesicni vklad", min_value=0.0, value=safe_number_input_value(selected_plan.get("monthly_contribution", 0.0)), step=50.0)
+            expected_return_pct = st.number_input("Ocekavany vynos %", min_value=0.0, value=safe_number_input_value(selected_plan.get("expected_return_pct", 0.0)), step=0.5)
             plan_notes = st.text_area("Poznamky k planu", value=str(selected_plan.get("plan_notes", "")))
             asset_notes = st.text_area("Poznamky k vyvoji aktiv", value=str(selected_plan.get("asset_notes", "")))
             save_long_term_plan_button = st.form_submit_button("Ulozit plan")
@@ -2697,7 +2852,7 @@ if current_page == t("transactions", language):
         st.write("**Vsechny transakce**")
         transactions_display_df = transactions_df.copy()
         if len(transactions_display_df) > 0:
-            transactions_display_df["date"] = transactions_display_df["date"].apply(lambda value: format_date_display(value, date_format_label))
+            transactions_display_df["date"] = pd.to_datetime(transactions_display_df["date"], errors="coerce")
             transactions_display_df = transactions_display_df.rename(
                 columns={
                     "date": "Datum",
@@ -2716,7 +2871,14 @@ if current_page == t("transactions", language):
                     "note": "Poznamka",
                 }
             )
-            st.dataframe(transactions_display_df, use_container_width=True, hide_index=True)
+            st.dataframe(
+                transactions_display_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Datum": st.column_config.DateColumn(format=date_format_label),
+                },
+            )
         else:
             st.info("N/A")
 
@@ -3019,9 +3181,10 @@ if current_page == t("reports", language):
         summary_col3.metric("Zhodnoceni v %", "N/A" if total_return_pct is None else f"{total_return_pct:.2f} %")
 
         detail_col1, detail_col2, detail_col3 = st.columns(3)
-        if len(df) > 0:
-            best_position = df.loc[df["profit_loss_pct"].idxmax()]
-            worst_position = df.loc[df["profit_loss_pct"].idxmin()]
+        valid_positions_df = df.dropna(subset=["profit_loss_pct"]) if len(df) > 0 else pd.DataFrame()
+        if len(valid_positions_df) > 0:
+            best_position = valid_positions_df.loc[valid_positions_df["profit_loss_pct"].idxmax()]
+            worst_position = valid_positions_df.loc[valid_positions_df["profit_loss_pct"].idxmin()]
             detail_col1.metric("Nejlepsi pozice", f"{best_position['ticker']} ({best_position['profit_loss_pct']:.2f} %)")
             detail_col2.metric("Nejhorsi pozice", f"{worst_position['ticker']} ({worst_position['profit_loss_pct']:.2f} %)")
         else:
@@ -3064,6 +3227,12 @@ if current_page == t("reports", language):
         performance_rows["Cisty vykon %"] = performance_rows["clean_performance_pct"].apply(
             lambda value: "N/A" if pd.isna(value) or value is None else f"{value:.2f} %"
         )
+        performance_rows["Cisty vykon vc. uzavrenych pozic v penezich"] = performance_rows["clean_with_closed_value_usd"].apply(
+            lambda value: "N/A" if pd.isna(value) or value is None else f"{base_currency} {convert_from_usd(value, base_currency):,.2f}"
+        )
+        performance_rows["Cisty vykon aktualniho portfolia %"] = performance_rows["clean_performance_pct"].apply(
+            lambda value: "N/A" if pd.isna(value) or value is None else f"{value:.2f} %"
+        )
         performance_rows["Cisty vykon vc. uzavrenych pozic %"] = performance_rows["clean_with_closed_pct"].apply(
             lambda value: "N/A" if pd.isna(value) or value is None else f"{value:.2f} %"
         )
@@ -3079,7 +3248,7 @@ if current_page == t("reports", language):
         if performance_view in ["Hodnota portfolia", "Oboje"]:
             performance_columns.extend(["Zmena hodnoty", "Zmena hodnoty %"])
         if performance_view in ["Cisty vykon", "Oboje"]:
-            performance_columns.extend(["Cisty vykon %", "Cisty vykon vc. uzavrenych pozic %", "SPY %", "MSCI World ETF %"])
+            performance_columns.extend(["Cisty vykon vc. uzavrenych pozic v penezich", "Cisty vykon vc. uzavrenych pozic %", "SPY %", "MSCI World ETF %", "Cisty vykon aktualniho portfolia %"])
 
         st.dataframe(
             performance_rows[performance_columns],
@@ -3383,8 +3552,8 @@ if current_page == t("overview", language):
 
             with st.form("edit_position_form"):
                 edit_ticker = st.text_input("Ticker ", value=str(selected_row["ticker"]))
-                edit_shares = st.number_input("Kusy ", min_value=0.0, value=float(selected_row["shares"]), step=1.0)
-                edit_buy_price = st.number_input("Nakupni cena ", min_value=0.0, value=float(selected_row["buy_price"]), step=0.01)
+                edit_shares = st.number_input("Kusy ", min_value=0.0, value=safe_number_input_value(selected_row["shares"]), step=1.0)
+                edit_buy_price = st.number_input("Nakupni cena ", min_value=0.0, value=safe_number_input_value(selected_row["buy_price"]), step=0.01)
                 edit_purchase_date = st.date_input("Datum nakupu ", value=edit_date_value.date())
                 edit_button = st.form_submit_button("Ulozit")
 
@@ -3394,8 +3563,14 @@ if current_page == t("overview", language):
                     else:
                         clean_ticker = edit_ticker.strip().upper()
                         other_match = raw_df[(raw_df["ticker"] == clean_ticker) & (raw_df.index != selected_edit_index)]
+                        existing_yfinance = selected_row["yfinance_ticker"] if pd.notna(selected_row.get("yfinance_ticker", None)) and str(selected_row.get("yfinance_ticker", "")).strip() else clean_ticker
                         raw_df.loc[selected_edit_index, "ticker"] = clean_ticker
-                        raw_df.loc[selected_edit_index, "yfinance_ticker"] = other_match["yfinance_ticker"].iloc[0] if len(other_match) > 0 else clean_ticker
+                        raw_df.loc[selected_edit_index, "yfinance_ticker"] = (
+                            other_match["yfinance_ticker"].iloc[0]
+                            if len(other_match) > 0
+                            else existing_yfinance if clean_ticker == str(selected_row["ticker"]).strip().upper()
+                            else clean_ticker
+                        )
                         raw_df.loc[selected_edit_index, "shares"] = float(edit_shares)
                         raw_df.loc[selected_edit_index, "buy_price"] = float(edit_buy_price)
                         raw_df.loc[selected_edit_index, "purchase_date"] = str(edit_purchase_date)
@@ -3460,7 +3635,7 @@ if current_page == t("overview", language):
         lambda row: format_price_with_currency(row["buy_price"], row["currency"] if pd.notna(row["currency"]) else "USD"),
         axis=1,
     )
-    df["company_display"] = df["company"].fillna("N/A")
+    df["company_display"] = df["company"].fillna("").replace("", "N/A")
     df["pe_display"] = df["pe"].apply(format_number)
     df["eps_display"] = df["eps"].apply(format_number)
     df["earnings_yield_display"] = df["earnings_yield"].apply(lambda value: format_number(value, " %"))
@@ -3586,9 +3761,10 @@ if current_page == t("overview", language):
     col2.metric("Celkovy zisk / ztrata", f"{base_currency} {total_profit_loss:,.2f}")
     col3.metric(t("last_updated", language), last_updated)
 
-    if len(df) > 0:
-        best_position = df.loc[df["profit_loss_pct"].idxmax()]
-        worst_position = df.loc[df["profit_loss_pct"].idxmin()]
+    valid_positions_df = df.dropna(subset=["profit_loss_pct"]) if len(df) > 0 else pd.DataFrame()
+    if len(valid_positions_df) > 0:
+        best_position = valid_positions_df.loc[valid_positions_df["profit_loss_pct"].idxmax()]
+        worst_position = valid_positions_df.loc[valid_positions_df["profit_loss_pct"].idxmin()]
 
         best_col, worst_col = st.columns(2)
         best_col.success(
@@ -3599,9 +3775,9 @@ if current_page == t("overview", language):
         )
 
     st.subheader(t("allocation", language))
-    if len(df) > 0:
-        chart_df = df[["ticker", "value_usd"]].copy()
-        chart_df["label"] = chart_df["ticker"] + " (" + ((chart_df["value_usd"] / total_value) * 100).round(1).astype(str) + "%)"
+    if len(df) > 0 and total_value != 0:
+        chart_df = df[["ticker", "value_usd", "value_base"]].copy()
+        chart_df["label"] = chart_df["ticker"] + " (" + ((chart_df["value_base"] / total_value) * 100).round(1).astype(str) + "%)"
 
         fig = px.pie(
             chart_df,

@@ -52,3 +52,16 @@ streamlit run main.py
 ```powershell
 python -m streamlit run main.py
 ```
+
+## Deployment na Streamlit Community Cloud
+
+- Hlavni soubor aplikace pro deployment je `main.py`
+- Zavislosti se instaluji z `requirements.txt`
+- Aplikace momentalne nema zadne povinne secrets
+- Pozor: soubory ve slozce `data/` obsahuji aplikační data. Pokud repo zverejnis na GitHubu, budou tato data verejna take
+
+### Doporuceni pred deploymentem
+
+- Pokud nechces zverejnit vlastni portfolio a transakce, nahraj na GitHub radsi anonymizovana nebo demo data
+- Lokalni soubor `.streamlit/secrets.toml` nikdy necommituj; je ignorovany v `.gitignore`
+- Upozorneni: aplikace zapisuje zmeny do CSV souboru v repo. Na Streamlit Community Cloud jsou tyto zmeny jen docasne v bezicim kontejneru a po restartu nebo redeployi se neuchovaji trvale
