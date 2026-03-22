@@ -1,6 +1,6 @@
 {
-  "language": "cs",
-  "base_currency": "EUR",
+  "language": "en",
+  "base_currency": "USD",
   "date_format": "DD.MM.YYYY",
   "visible_columns": [
     "Ticker",
@@ -20,5 +20,11 @@
     "Market Cap",
     "Beta"
   ],
+  "fx_pairs": [
+    "CZK/USD",
+    "CZK/EUR",
+    "USD/EUR"
+  ],
+  "show_fx_rates": true,
   "theme": "dark"
 }

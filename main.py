@@ -17,7 +17,7 @@ LONG_TERM_CHECKS_PATH = "data/long_term_checks.csv"
 TRANSACTIONS_PATH = "data/transactions.csv"
 SETTINGS_PATH = "settings.json"
 HISTORY_PERIODS = {"1 mesic": "1mo", "3 mesice": "3mo", "1 rok": "1y"}
-BENCHMARKS = {"SPY": "SPY", "MSCI World ETF": "URTH"}
+BENCHMARKS = {"SPY": "SPY", "MSCI World ETF": "URTH", "Nasdaq 100": "QQQ"}
 DATE_FORMATS = {
     "DD.MM.YYYY": "%d.%m.%Y",
     "YYYY-MM-DD": "%Y-%m-%d",
@@ -41,11 +41,27 @@ DEFAULT_VISIBLE_COLUMNS = [
     "Market Cap",
     "Beta",
 ]
+DEFAULT_FX_PAIRS = ["CZK/USD", "CZK/EUR"]
+FX_PAIR_CONFIG = {
+    "CZK/USD": {"ticker": "USDCZK=X", "suffix": "Kc"},
+    "CZK/EUR": {"ticker": "EURCZK=X", "suffix": "Kc"},
+    "CZK/GBP": {"ticker": "GBPCZK=X", "suffix": "Kc"},
+    "CZK/CHF": {"ticker": "CHFCZK=X", "suffix": "Kc"},
+    "USD/EUR": {"ticker": "EURUSD=X", "suffix": ""},
+    "EUR/USD": {"ticker": "EURUSD=X", "suffix": ""},
+    "GBP/USD": {"ticker": "GBPUSD=X", "suffix": ""},
+    "USD/JPY": {"ticker": "JPY=X", "suffix": ""},
+    "EUR/GBP": {"ticker": "EURGBP=X", "suffix": ""},
+    "EUR/CHF": {"ticker": "EURCHF=X", "suffix": ""},
+    "GBP/CHF": {"ticker": "GBPCHF=X", "suffix": ""},
+}
 DEFAULT_SETTINGS = {
     "language": "cs",
     "base_currency": "USD",
     "date_format": "DD.MM.YYYY",
     "visible_columns": DEFAULT_VISIBLE_COLUMNS,
+    "fx_pairs": DEFAULT_FX_PAIRS,
+    "show_fx_rates": True,
     "theme": "dark",
 }
 TEXTS = {
@@ -69,6 +85,8 @@ TEXTS = {
         "base_currency": "Zakladni mena portfolia",
         "date_format": "Format data",
         "visible_columns": "Zobrazene sloupce v tabulce",
+        "fx_pairs": "Zobrazene FX kurzy",
+        "show_fx_rates": "Zobrazit FX kurzy v portfoliu",
         "theme": "Theme",
         "save_settings": "Ulozit nastaveni",
         "settings_saved": "Nastaveni bylo ulozeno.",
@@ -113,6 +131,8 @@ TEXTS = {
         "base_currency": "Portfolio base currency",
         "date_format": "Date format",
         "visible_columns": "Visible table columns",
+        "fx_pairs": "Visible FX rates",
+        "show_fx_rates": "Show FX rates in portfolio",
         "theme": "Theme",
         "save_settings": "Save settings",
         "settings_saved": "Settings were saved.",
@@ -471,6 +491,7 @@ def load_settings() -> dict:
         settings["date_format"] = DEFAULT_SETTINGS["date_format"]
     if settings.get("theme") not in ["dark", "light"]:
         settings["theme"] = DEFAULT_SETTINGS["theme"]
+    settings["show_fx_rates"] = bool(settings.get("show_fx_rates", DEFAULT_SETTINGS["show_fx_rates"]))
 
     # Jednoducha migrace starsich nazvu sloupcu v nastaveni.
     if "visible_columns" in settings:
@@ -484,6 +505,10 @@ def load_settings() -> dict:
         if "1 Year" not in settings["visible_columns"]:
             nakupni_index = settings["visible_columns"].index("Nakupni cena") + 1 if "Nakupni cena" in settings["visible_columns"] else len(settings["visible_columns"])
             settings["visible_columns"].insert(nakupni_index, "1 Year")
+    settings["fx_pairs"] = [
+        pair for pair in settings.get("fx_pairs", DEFAULT_FX_PAIRS)
+        if pair in FX_PAIR_CONFIG
+    ] or DEFAULT_FX_PAIRS.copy()
     return settings
 
 
@@ -496,6 +521,82 @@ def save_settings(settings: dict) -> None:
 def t(key: str, language: str) -> str:
     # Vrati kratky preklad pro hlavni casti aplikace.
     return TEXTS.get(language, TEXTS["cs"]).get(key, key)
+
+
+def render_page_header(title: str, subtitle: str, eyebrow: str = "Workspace") -> None:
+    st.markdown(
+        f"""
+        <div class="page-hero">
+            <div class="page-eyebrow">{eyebrow}</div>
+            <div class="page-title">{title}</div>
+            <div class="page-subtitle">{subtitle}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_kpi_cards(cards: list[dict]) -> None:
+    columns = st.columns(len(cards))
+    for column, card in zip(columns, cards):
+        delta = card.get("delta", "")
+        tone = card.get("tone", "neutral")
+        with column:
+            st.markdown(
+                f"""
+                <div class="metric-card tone-{tone}">
+                    <div class="metric-label">{card.get("label", "")}</div>
+                    <div class="metric-value">{card.get("value", "N/A")}</div>
+                    <div class="metric-delta">{delta}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
+def render_section_intro(title: str, subtitle: str = "") -> None:
+    st.markdown(
+        f"""
+        <div class="section-head">
+            <div class="section-title">{title}</div>
+            <div class="section-subtitle">{subtitle}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def format_currency_metric(value: float | None, currency: str) -> str:
+    if value is None or pd.isna(value):
+        return "N/A"
+    return f"{currency} {value:,.2f}"
+
+
+def format_percent_metric(value: float | None) -> str:
+    if value is None or pd.isna(value):
+        return "N/A"
+    return f"{value:.2f} %"
+
+
+def format_watchlist_badge(status: str) -> str:
+    if status == "V nakupni zone":
+        return "🟢 V nakupni zone"
+    if status == "Pod nakupni zonou":
+        return "🔵 Pod nakupni zonou"
+    if status == "Nad nakupni zonou":
+        return "🟠 Nad nakupni zonou"
+    return "N/A"
+
+
+def format_watchlist_badge(status: str) -> str:
+    # ASCII badge text kvuli konzistentnimu zobrazeni v dataframe.
+    if status == "V nakupni zone":
+        return "BUY ZONA"
+    if status == "Pod nakupni zonou":
+        return "POD ZONOU"
+    if status == "Nad nakupni zonou":
+        return "NAD ZONOU"
+    return "N/A"
 
 
 def apply_theme(theme: str) -> None:
@@ -547,6 +648,59 @@ def apply_theme(theme: str) -> None:
                 padding: 0.45rem 0.55rem;
                 margin-bottom: 0.2rem;
             }
+            .page-hero {
+                margin: 0 0 1.2rem 0;
+                padding: 1.2rem 1.3rem;
+                border-radius: 24px;
+                background: linear-gradient(135deg, #ffffff 0%, #f3f7fb 100%);
+                border: 1px solid #d9e1ea;
+            }
+            .page-eyebrow, .section-subtitle {
+                font-size: 0.85rem;
+                color: #64748b;
+            }
+            .page-title {
+                font-size: 2.2rem;
+                font-weight: 800;
+                color: #0f172a;
+                margin: 0.25rem 0;
+            }
+            .page-subtitle {
+                color: #475569;
+                max-width: 900px;
+            }
+            .metric-card {
+                padding: 1rem 1.05rem;
+                border-radius: 20px;
+                border: 1px solid #d9e1ea;
+                background: #ffffff;
+                box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+            }
+            .metric-label {
+                font-size: 0.8rem;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                color: #64748b;
+                margin-bottom: 0.45rem;
+            }
+            .metric-value {
+                font-size: 1.8rem;
+                font-weight: 800;
+                color: #0f172a;
+            }
+            .metric-delta {
+                margin-top: 0.35rem;
+                color: #475569;
+                font-size: 0.92rem;
+            }
+            .section-head {
+                margin: 1rem 0 0.75rem 0;
+            }
+            .section-title {
+                font-size: 1.2rem;
+                font-weight: 700;
+                color: #0f172a;
+            }
             </style>
             """,
             unsafe_allow_html=True,
@@ -597,6 +751,60 @@ def apply_theme(theme: str) -> None:
                 border-radius: 12px;
                 padding: 0.45rem 0.55rem;
                 margin-bottom: 0.2rem;
+            }
+            .page-hero {
+                margin: 0 0 1.2rem 0;
+                padding: 1.2rem 1.3rem;
+                border-radius: 24px;
+                background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(20,28,39,0.95) 100%);
+                border: 1px solid #273244;
+                box-shadow: 0 18px 44px rgba(0, 0, 0, 0.24);
+            }
+            .page-eyebrow, .section-subtitle {
+                font-size: 0.85rem;
+                color: #8b9bb2;
+            }
+            .page-title {
+                font-size: 2.4rem;
+                font-weight: 800;
+                color: #f8fafc;
+                margin: 0.25rem 0;
+            }
+            .page-subtitle {
+                color: #b6c2d2;
+                max-width: 900px;
+            }
+            .metric-card {
+                padding: 1rem 1.05rem;
+                border-radius: 20px;
+                border: 1px solid #263142;
+                background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(15,17,22,0.92) 100%);
+                box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28);
+            }
+            .metric-label {
+                font-size: 0.8rem;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                color: #8b9bb2;
+                margin-bottom: 0.45rem;
+            }
+            .metric-value {
+                font-size: 1.85rem;
+                font-weight: 800;
+                color: #f8fafc;
+            }
+            .metric-delta {
+                margin-top: 0.35rem;
+                color: #b6c2d2;
+                font-size: 0.92rem;
+            }
+            .section-head {
+                margin: 1rem 0 0.75rem 0;
+            }
+            .section-title {
+                font-size: 1.2rem;
+                font-weight: 700;
+                color: #f8fafc;
             }
             </style>
             """,
@@ -781,6 +989,43 @@ def get_fx_rate_to_usd(currency: str) -> float:
 
 
 @st.cache_data(ttl=3600)
+def get_historical_fx_rate_to_usd(currency: str, date_value) -> float:
+    # Vrati historicky kurz do USD k danemu datu, fallback je aktualni kurz.
+    if currency == "USD":
+        return 1.0
+
+    target_date = pd.to_datetime(date_value, errors="coerce")
+    if pd.isna(target_date):
+        return get_fx_rate_to_usd(currency)
+    target_date = target_date.normalize()
+
+    if currency == "EUR":
+        fx_df = get_price_history("EURUSD=X", "max")
+        if fx_df.empty:
+            return get_fx_rate_to_usd(currency)
+
+        fx_df["Date"] = pd.to_datetime(fx_df["Date"], errors="coerce").dt.normalize()
+        historical = fx_df[fx_df["Date"] <= target_date]
+        if len(historical) == 0:
+            return get_fx_rate_to_usd(currency)
+        return float(historical["close"].iloc[-1])
+
+    if currency == "CZK":
+        fx_df = get_price_history("USDCZK=X", "max")
+        if fx_df.empty:
+            return get_fx_rate_to_usd(currency)
+
+        fx_df["Date"] = pd.to_datetime(fx_df["Date"], errors="coerce").dt.normalize()
+        historical = fx_df[fx_df["Date"] <= target_date]
+        if len(historical) == 0:
+            return get_fx_rate_to_usd(currency)
+        usdczk = float(historical["close"].iloc[-1])
+        return 1 / usdczk if usdczk else get_fx_rate_to_usd(currency)
+
+    return get_fx_rate_to_usd(currency)
+
+
+@st.cache_data(ttl=3600)
 def convert_from_usd(amount: float, target_currency: str) -> float:
     # Prevede castku z USD do zvolene meny.
     if pd.isna(amount) or amount is None:
@@ -930,6 +1175,208 @@ def build_portfolio_history(raw_df: pd.DataFrame, period: str) -> tuple[pd.DataF
     return combined.reset_index()[["Date", "portfolio_value"]], sorted(set(missing_tickers))
 
 
+def get_open_transaction_tickers(transactions_df: pd.DataFrame) -> list[str]:
+    # Vrati tickery, kde po zapocteni buy/sell zustava otevrena pozice.
+    if len(transactions_df) == 0:
+        return []
+
+    working_df = transactions_df.copy()
+    working_df["ticker"] = working_df["ticker"].astype(str).str.upper().str.strip()
+    working_df["transaction_type"] = working_df["transaction_type"].astype(str).str.lower().str.strip()
+    working_df["quantity"] = pd.to_numeric(working_df["quantity"], errors="coerce").fillna(0.0)
+    working_df = working_df[working_df["transaction_type"].isin(["buy", "sell"])]
+    if len(working_df) == 0:
+        return []
+
+    working_df["signed_quantity"] = working_df.apply(
+        lambda row: row["quantity"] if row["transaction_type"] == "buy" else -row["quantity"],
+        axis=1,
+    )
+    summary = working_df.groupby("ticker", as_index=False)["signed_quantity"].sum()
+    return summary[summary["signed_quantity"] > 0]["ticker"].tolist()
+
+
+def build_open_lot_transactions(
+    transactions_df: pd.DataFrame,
+    include_tickers: list[str] | None = None,
+) -> pd.DataFrame:
+    # Vrati synteticke buy radky pouze pro loty, ktere jsou stale otevrene.
+    if len(transactions_df) == 0:
+        return pd.DataFrame(columns=transactions_df.columns)
+
+    working_df = transactions_df.copy()
+    working_df["ticker"] = working_df["ticker"].astype(str).str.upper().str.strip()
+    working_df["transaction_type"] = working_df["transaction_type"].astype(str).str.lower().str.strip()
+    working_df["quantity"] = pd.to_numeric(working_df["quantity"], errors="coerce").fillna(0.0)
+    working_df["buy_fee"] = pd.to_numeric(working_df["buy_fee"], errors="coerce").fillna(0.0)
+    working_df["sell_fee"] = pd.to_numeric(working_df["sell_fee"], errors="coerce").fillna(0.0)
+    working_df["fx_fee"] = pd.to_numeric(working_df["fx_fee"], errors="coerce").fillna(0.0)
+    working_df["date_sort"] = pd.to_datetime(working_df["date"], errors="coerce")
+    working_df = working_df.dropna(subset=["date_sort"])
+    working_df = working_df[working_df["transaction_type"].isin(["buy", "sell"])]
+
+    if include_tickers is not None:
+        allowed_tickers = {str(ticker).upper().strip() for ticker in include_tickers}
+        working_df = working_df[working_df["ticker"].isin(allowed_tickers)]
+
+    if len(working_df) == 0:
+        return pd.DataFrame(columns=transactions_df.columns)
+
+    open_lot_rows = []
+    for ticker in sorted(working_df["ticker"].unique().tolist()):
+        ticker_df = working_df[working_df["ticker"] == ticker].sort_values(["date_sort"]).copy()
+        open_lots = []
+
+        for row in ticker_df.itertuples(index=False):
+            if row.transaction_type == "buy":
+                row_dict = row._asdict()
+                row_dict["remaining_quantity"] = float(row.quantity)
+                open_lots.append(row_dict)
+                continue
+
+            remaining_sell = float(row.quantity)
+            while remaining_sell > 0 and open_lots:
+                first_lot = open_lots[0]
+                available_quantity = float(first_lot["remaining_quantity"])
+                matched_quantity = min(available_quantity, remaining_sell)
+                first_lot["remaining_quantity"] = available_quantity - matched_quantity
+                remaining_sell -= matched_quantity
+                if first_lot["remaining_quantity"] <= 1e-9:
+                    open_lots.pop(0)
+
+        for lot in open_lots:
+            original_quantity = float(lot["quantity"])
+            remaining_quantity = float(lot["remaining_quantity"])
+            if remaining_quantity <= 1e-9 or original_quantity <= 0:
+                continue
+
+            ratio = remaining_quantity / original_quantity
+            cleaned_lot = {column: lot.get(column) for column in transactions_df.columns}
+            cleaned_lot["transaction_type"] = "buy"
+            cleaned_lot["quantity"] = remaining_quantity
+            cleaned_lot["buy_fee"] = float(lot.get("buy_fee", 0.0)) * ratio
+            cleaned_lot["fx_fee"] = float(lot.get("fx_fee", 0.0)) * ratio
+            cleaned_lot["sell_fee"] = 0.0
+            open_lot_rows.append(cleaned_lot)
+
+    if not open_lot_rows:
+        return pd.DataFrame(columns=transactions_df.columns)
+
+    return pd.DataFrame(open_lot_rows)
+
+
+def filter_history_by_period(history_df: pd.DataFrame, period: str) -> pd.DataFrame:
+    # Oreze historii na zvolene obdobi pri zachovani poslednich dostupnych obchodnich dni.
+    if history_df.empty or period == "max":
+        return history_df.copy()
+
+    max_date = pd.to_datetime(history_df["Date"], errors="coerce").max()
+    if pd.isna(max_date):
+        return history_df.copy()
+
+    if period == "1mo":
+        start_date = max_date - pd.DateOffset(months=1)
+    elif period == "3mo":
+        start_date = max_date - pd.DateOffset(months=3)
+    elif period == "1y":
+        start_date = max_date - pd.DateOffset(years=1)
+    else:
+        return history_df.copy()
+
+    filtered = history_df[pd.to_datetime(history_df["Date"], errors="coerce") >= start_date].copy()
+    return filtered.reset_index(drop=True)
+
+
+def build_transaction_portfolio_history(
+    transactions_df: pd.DataFrame,
+    ticker_map: dict,
+    period: str = "max",
+    include_tickers: list[str] | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
+    # Presnejsi historie portfolia podle transakci buy/sell pro vybrane tickery.
+    if len(transactions_df) == 0:
+        return pd.DataFrame(), []
+
+    working_df = transactions_df.copy()
+    working_df["ticker"] = working_df["ticker"].astype(str).str.upper().str.strip()
+    working_df["transaction_type"] = working_df["transaction_type"].astype(str).str.lower().str.strip()
+    working_df["quantity"] = pd.to_numeric(working_df["quantity"], errors="coerce").fillna(0.0)
+    working_df["date_sort"] = pd.to_datetime(working_df["date"], errors="coerce").dt.normalize()
+    working_df = working_df[working_df["transaction_type"].isin(["buy", "sell"])]
+    working_df = working_df[working_df["ticker"] != ""]
+    working_df = working_df.dropna(subset=["date_sort"])
+
+    if include_tickers is not None:
+        allowed_tickers = {str(ticker).upper().strip() for ticker in include_tickers}
+        working_df = working_df[working_df["ticker"].isin(allowed_tickers)]
+
+    if len(working_df) == 0:
+        return pd.DataFrame(), []
+
+    all_series = []
+    missing_tickers = []
+    for ticker in sorted(working_df["ticker"].unique().tolist()):
+        ticker_transactions = working_df[working_df["ticker"] == ticker].copy()
+        first_transaction_date = pd.to_datetime(ticker_transactions["date_sort"], errors="coerce").min()
+        ticker_transactions["quantity_delta"] = ticker_transactions.apply(
+            lambda row: row["quantity"] if row["transaction_type"] == "buy" else -row["quantity"],
+            axis=1,
+        )
+        quantity_changes = (
+            ticker_transactions.groupby("date_sort", as_index=False)["quantity_delta"]
+            .sum()
+            .rename(columns={"date_sort": "Date"})
+        )
+
+        yfinance_ticker = ticker_map.get(ticker, {}).get("yfinance_ticker", ticker)
+        history_df = get_price_history(yfinance_ticker, "max")
+        if history_df.empty:
+            missing_tickers.append(ticker)
+            continue
+
+        currency_candidates = (
+            ticker_transactions["currency"]
+            .dropna()
+            .astype(str)
+            .str.upper()
+            .replace(["", "NAN", "NONE"], pd.NA)
+            .dropna()
+        )
+        currency = currency_candidates.iloc[0] if len(currency_candidates) > 0 else "USD"
+        history_df = convert_history_to_usd(history_df, currency)
+        if history_df.empty:
+            missing_tickers.append(ticker)
+            continue
+
+        if pd.notna(first_transaction_date):
+            history_df = history_df[history_df["Date"] >= first_transaction_date]
+        if history_df.empty:
+            missing_tickers.append(ticker)
+            continue
+
+        ticker_history = history_df.merge(quantity_changes, on="Date", how="outer").sort_values("Date")
+        ticker_history["quantity_delta"] = ticker_history["quantity_delta"].fillna(0.0)
+        ticker_history["quantity"] = ticker_history["quantity_delta"].cumsum()
+        ticker_history["quantity"] = ticker_history["quantity"].ffill().fillna(0.0)
+        ticker_history = ticker_history[ticker_history["close"].notna()].copy()
+        ticker_history["value"] = ticker_history["close"] * ticker_history["quantity"]
+        ticker_history = ticker_history[["Date", "value"]].rename(columns={"value": ticker})
+        all_series.append(ticker_history.set_index("Date"))
+
+    if not all_series:
+        return pd.DataFrame(), sorted(set(missing_tickers))
+
+    combined = pd.concat(all_series, axis=1).sort_index().ffill().fillna(0.0)
+    combined["portfolio_value"] = combined.sum(axis=1)
+    positive_mask = combined["portfolio_value"] > 0
+    if positive_mask.any():
+        first_positive_date = combined.index[positive_mask][0]
+        combined = combined[combined.index >= first_positive_date]
+    combined = combined.reset_index()[["Date", "portfolio_value"]]
+    combined = filter_history_by_period(combined, period)
+    return combined, sorted(set(missing_tickers))
+
+
 def build_benchmark_history(period: str, benchmark_ticker: str) -> pd.DataFrame:
     # Nacte historii benchmarku a vrati ji v USD.
     history_df = get_price_history(benchmark_ticker, period)
@@ -973,6 +1420,22 @@ def normalize_to_percent(series: pd.Series) -> pd.Series:
         return pd.Series(dtype=float)
 
     return ((cleaned / start_value) - 1) * 100
+
+
+def get_latest_history_change_pct(history_df: pd.DataFrame) -> float | None:
+    # Vrati procentni zmenu mezi poslednimi dvema dostupnymi body historie.
+    if history_df.empty or "close" not in history_df.columns:
+        return None
+
+    cleaned = history_df.dropna(subset=["close"]).copy()
+    if len(cleaned) < 2:
+        return None
+
+    previous_close = safe_float(cleaned["close"].iloc[-2])
+    current_close = safe_float(cleaned["close"].iloc[-1])
+    if previous_close in (None, 0) or current_close is None:
+        return None
+    return ((current_close - previous_close) / previous_close) * 100
 
 
 def calculate_performance_from_date(history_df: pd.DataFrame, start_date: pd.Timestamp) -> tuple[float | None, float | None]:
@@ -1081,7 +1544,7 @@ def calculate_combined_performance_value(
 ) -> float | None:
     # Penezni varianta cisteho vykonu vcetne uzavrenych pozic.
     if clean_performance_value_usd is None:
-        return None
+        return realized_result_usd if realized_result_usd != 0 else None
     return clean_performance_value_usd + realized_result_usd
 
 
@@ -1126,6 +1589,262 @@ def build_portfolio_cash_flows(raw_df: pd.DataFrame) -> pd.DataFrame:
 
     cash_flows_df = pd.DataFrame(cash_flow_rows)
     return cash_flows_df.groupby("Date", as_index=False)["net_flow_usd"].sum()
+
+
+def build_transaction_cash_flows(
+    transactions_df: pd.DataFrame,
+    include_tickers: list[str] | None = None,
+) -> pd.DataFrame:
+    # Cash flow vrstva z transakci pro presnejsi vypocet cisteho vykonu otevrenych pozic.
+    if len(transactions_df) == 0:
+        return pd.DataFrame(columns=["Date", "net_flow_usd"])
+
+    working_df = transactions_df.copy()
+    working_df["ticker"] = working_df["ticker"].astype(str).str.upper().str.strip()
+    working_df["transaction_type"] = working_df["transaction_type"].astype(str).str.lower().str.strip()
+    working_df["date_sort"] = pd.to_datetime(working_df["date"], errors="coerce").dt.normalize()
+    working_df["quantity"] = pd.to_numeric(working_df["quantity"], errors="coerce").fillna(0.0)
+    working_df["price"] = pd.to_numeric(working_df["price"], errors="coerce").fillna(0.0)
+    working_df["buy_fee"] = pd.to_numeric(working_df["buy_fee"], errors="coerce").fillna(0.0)
+    working_df["sell_fee"] = pd.to_numeric(working_df["sell_fee"], errors="coerce").fillna(0.0)
+    working_df["fx_fee"] = pd.to_numeric(working_df["fx_fee"], errors="coerce").fillna(0.0)
+    working_df = working_df.dropna(subset=["date_sort"])
+
+    if include_tickers is not None:
+        allowed_tickers = {str(ticker).upper().strip() for ticker in include_tickers}
+        ticker_related_mask = working_df["ticker"].isin(allowed_tickers)
+        cash_like_mask = working_df["transaction_type"].isin(["fee"])
+        working_df = working_df[ticker_related_mask | cash_like_mask]
+
+    flow_rows = []
+    for row in working_df.itertuples(index=False):
+        currency = str(row.currency).upper().strip() if pd.notna(row.currency) and str(row.currency).strip() else "USD"
+        fx_rate = get_historical_fx_rate_to_usd(currency, row.date_sort)
+        gross_amount_usd = float(row.quantity) * float(row.price) * fx_rate
+        buy_fee_usd = float(row.buy_fee) * fx_rate
+        sell_fee_usd = float(row.sell_fee) * fx_rate
+        fx_fee_usd = float(row.fx_fee) * fx_rate
+        transaction_type = str(row.transaction_type).lower().strip()
+
+        net_flow_usd = 0.0
+        if transaction_type == "buy":
+            net_flow_usd = gross_amount_usd + buy_fee_usd + fx_fee_usd
+        elif transaction_type == "sell":
+            net_flow_usd = -(gross_amount_usd - sell_fee_usd - fx_fee_usd)
+        elif transaction_type == "dividend":
+            net_flow_usd = -(gross_amount_usd - fx_fee_usd)
+        elif transaction_type == "fee":
+            net_flow_usd = float(max(gross_amount_usd, buy_fee_usd + sell_fee_usd + fx_fee_usd))
+        else:
+            continue
+
+        flow_rows.append({"Date": row.date_sort, "net_flow_usd": net_flow_usd})
+
+    if not flow_rows:
+        return pd.DataFrame(columns=["Date", "net_flow_usd"])
+
+    cash_flows_df = pd.DataFrame(flow_rows)
+    return cash_flows_df.groupby("Date", as_index=False)["net_flow_usd"].sum()
+
+
+def align_cash_flows_to_history_dates(cash_flows_df: pd.DataFrame, history_df: pd.DataFrame) -> pd.DataFrame:
+    # Zarovna cash flow z neobchodnich dni na nejblizsi dalsi obchodni den v historii.
+    if cash_flows_df.empty or history_df.empty:
+        return cash_flows_df.copy()
+
+    aligned_flows = cash_flows_df.copy()
+    history_dates = pd.to_datetime(history_df["Date"], errors="coerce").dropna().sort_values().drop_duplicates().tolist()
+    if not history_dates:
+        return aligned_flows
+
+    mapped_dates = []
+    for flow_date in pd.to_datetime(aligned_flows["Date"], errors="coerce").dt.normalize():
+        if pd.isna(flow_date):
+            mapped_dates.append(pd.NaT)
+            continue
+
+        mapped_date = next((history_date for history_date in history_dates if history_date >= flow_date), None)
+        if mapped_date is None:
+            mapped_date = history_dates[-1]
+        mapped_dates.append(mapped_date)
+
+    aligned_flows["Date"] = mapped_dates
+    aligned_flows = aligned_flows.dropna(subset=["Date"])
+    return aligned_flows.groupby("Date", as_index=False)["net_flow_usd"].sum()
+
+
+def build_account_clean_performance_history(
+    history_df: pd.DataFrame,
+    transactions_df: pd.DataFrame,
+    include_tickers: list[str] | None = None,
+) -> pd.DataFrame:
+    # Synteticka account-equity krivka: drzi vykon prodanych aktiv v cashi bez schodu z realizace.
+    if history_df.empty:
+        return pd.DataFrame()
+
+    working_df = transactions_df.copy()
+    if len(working_df) == 0:
+        return pd.DataFrame()
+
+    working_df["ticker"] = working_df["ticker"].astype(str).str.upper().str.strip()
+    working_df["transaction_type"] = working_df["transaction_type"].astype(str).str.lower().str.strip()
+    working_df["date_sort"] = pd.to_datetime(working_df["date"], errors="coerce").dt.normalize()
+    working_df["quantity"] = pd.to_numeric(working_df["quantity"], errors="coerce").fillna(0.0)
+    working_df["price"] = pd.to_numeric(working_df["price"], errors="coerce").fillna(0.0)
+    working_df["buy_fee"] = pd.to_numeric(working_df["buy_fee"], errors="coerce").fillna(0.0)
+    working_df["sell_fee"] = pd.to_numeric(working_df["sell_fee"], errors="coerce").fillna(0.0)
+    working_df["fx_fee"] = pd.to_numeric(working_df["fx_fee"], errors="coerce").fillna(0.0)
+    working_df = working_df.dropna(subset=["date_sort"])
+
+    if include_tickers is not None:
+        allowed_tickers = {str(ticker).upper().strip() for ticker in include_tickers}
+        ticker_related_mask = working_df["ticker"].isin(allowed_tickers)
+        cash_like_mask = working_df["transaction_type"].isin(["fee", "dividend"])
+        working_df = working_df[ticker_related_mask | cash_like_mask]
+
+    if len(working_df) == 0:
+        return pd.DataFrame()
+
+    cash_change_rows = []
+    for row in working_df.itertuples(index=False):
+        currency = str(row.currency).upper().strip() if pd.notna(row.currency) and str(row.currency).strip() else "USD"
+        fx_rate = get_historical_fx_rate_to_usd(currency, row.date_sort)
+        gross_amount_usd = float(row.quantity) * float(row.price) * fx_rate
+        buy_fee_usd = float(row.buy_fee) * fx_rate
+        sell_fee_usd = float(row.sell_fee) * fx_rate
+        fx_fee_usd = float(row.fx_fee) * fx_rate
+        transaction_type = str(row.transaction_type).lower().strip()
+
+        cash_change_usd = 0.0
+        if transaction_type == "buy":
+            cash_change_usd = -(gross_amount_usd + buy_fee_usd + fx_fee_usd)
+        elif transaction_type == "sell":
+            cash_change_usd = gross_amount_usd - sell_fee_usd - fx_fee_usd
+        elif transaction_type == "dividend":
+            cash_change_usd = gross_amount_usd - fx_fee_usd
+        elif transaction_type == "fee":
+            cash_change_usd = -float(max(gross_amount_usd, buy_fee_usd + sell_fee_usd + fx_fee_usd))
+        else:
+            continue
+
+        cash_change_rows.append({"Date": row.date_sort, "cash_change_usd": cash_change_usd})
+
+    if not cash_change_rows:
+        return pd.DataFrame()
+
+    cash_change_df = pd.DataFrame(cash_change_rows)
+    cash_change_df = cash_change_df.groupby("Date", as_index=False)["cash_change_usd"].sum()
+    cash_change_df = align_cash_flows_to_history_dates(
+        cash_change_df.rename(columns={"cash_change_usd": "net_flow_usd"}),
+        history_df,
+    ).rename(columns={"net_flow_usd": "cash_change_usd"})
+
+    account_df = history_df.copy()
+    account_df["Date"] = pd.to_datetime(account_df["Date"], errors="coerce").dt.normalize()
+    account_df = account_df.merge(cash_change_df, on="Date", how="left")
+    account_df["cash_change_usd"] = account_df["cash_change_usd"].fillna(0.0)
+
+    cash_balance = 0.0
+    external_flows = []
+    cash_balances = []
+    for row in account_df.itertuples(index=False):
+        day_cash_change = float(row.cash_change_usd)
+        external_flow = 0.0
+        if cash_balance + day_cash_change < 0:
+            external_flow = -(cash_balance + day_cash_change)
+        cash_balance = cash_balance + day_cash_change + external_flow
+        external_flows.append(external_flow)
+        cash_balances.append(cash_balance)
+
+    account_df["external_flow_usd"] = external_flows
+    account_df["cash_balance_usd"] = cash_balances
+    account_df["equity_value"] = account_df["portfolio_value"] + account_df["cash_balance_usd"]
+    account_df["previous_equity_value"] = account_df["equity_value"].shift(1)
+    account_df["period_clean_return"] = 0.0
+
+    valid_mask = account_df["previous_equity_value"] > 0
+    account_df.loc[valid_mask, "period_clean_return"] = (
+        (
+            account_df.loc[valid_mask, "equity_value"]
+            - account_df.loc[valid_mask, "previous_equity_value"]
+            - account_df.loc[valid_mask, "external_flow_usd"]
+        )
+        / account_df.loc[valid_mask, "previous_equity_value"]
+    )
+    account_df["clean_growth_factor"] = (1 + account_df["period_clean_return"].fillna(0.0)).cumprod()
+    account_df["clean_return_pct"] = (account_df["clean_growth_factor"] - 1) * 100
+    return account_df
+
+
+def build_clean_performance_history_from_transactions(
+    history_df: pd.DataFrame,
+    transactions_df: pd.DataFrame,
+    include_tickers: list[str] | None = None,
+) -> pd.DataFrame:
+    # Presnejsi cisty vykon nad historii z transakci a cash flow.
+    if history_df.empty:
+        return pd.DataFrame()
+
+    clean_df = history_df.copy()
+    clean_df["Date"] = pd.to_datetime(clean_df["Date"]).dt.normalize()
+    cash_flows_df = build_transaction_cash_flows(transactions_df, include_tickers)
+    cash_flows_df = align_cash_flows_to_history_dates(cash_flows_df, clean_df)
+    clean_df = clean_df.merge(cash_flows_df, on="Date", how="left")
+    clean_df["net_flow_usd"] = clean_df["net_flow_usd"].fillna(0.0)
+    clean_df["previous_value"] = clean_df["portfolio_value"].shift(1)
+    clean_df["period_clean_return"] = 0.0
+
+    valid_mask = clean_df["previous_value"] > 0
+    clean_df.loc[valid_mask, "period_clean_return"] = (
+        (clean_df.loc[valid_mask, "portfolio_value"] - clean_df.loc[valid_mask, "previous_value"] - clean_df.loc[valid_mask, "net_flow_usd"])
+        / clean_df.loc[valid_mask, "previous_value"]
+    )
+    clean_df["clean_growth_factor"] = (1 + clean_df["period_clean_return"].fillna(0.0)).cumprod()
+    clean_df["clean_return_pct"] = (clean_df["clean_growth_factor"] - 1) * 100
+    return clean_df
+
+
+def build_clean_with_closed_history(
+    clean_history_df: pd.DataFrame,
+    closed_positions_df: pd.DataFrame,
+) -> pd.DataFrame:
+    # Prida ke krivce aktualniho portfolia i realizovany vysledek uzavrenych pozic.
+    if clean_history_df.empty:
+        return pd.DataFrame()
+
+    combined_df = clean_history_df.copy()
+    combined_df["Date"] = pd.to_datetime(combined_df["Date"], errors="coerce").dt.normalize()
+    combined_df["clean_with_closed_pct"] = combined_df["clean_return_pct"]
+
+    if closed_positions_df.empty or "Datum prodeje" not in closed_positions_df.columns:
+        return combined_df
+
+    closed_df = closed_positions_df.copy()
+    closed_df["Datum prodeje"] = pd.to_datetime(closed_df["Datum prodeje"], errors="coerce").dt.normalize()
+    closed_df["Realizovany zisk / ztrata USD"] = pd.to_numeric(
+        closed_df.get("Realizovany zisk / ztrata USD"),
+        errors="coerce",
+    ).fillna(0.0)
+    closed_df = closed_df.dropna(subset=["Datum prodeje"])
+
+    if len(closed_df) == 0:
+        return combined_df
+
+    combined_values = []
+    for row in combined_df.itertuples(index=False):
+        current_date = pd.to_datetime(row.Date, errors="coerce")
+        realized_result = float(
+            closed_df.loc[closed_df["Datum prodeje"] <= current_date, "Realizovany zisk / ztrata USD"].sum()
+        )
+        combined_pct = calculate_combined_performance_pct(
+            safe_float(row.clean_return_pct),
+            safe_float(row.portfolio_value),
+            realized_result,
+        )
+        combined_values.append(combined_pct)
+
+    combined_df["clean_with_closed_pct"] = combined_values
+    return combined_df
 
 
 def build_clean_performance_history(history_df: pd.DataFrame, raw_df: pd.DataFrame) -> pd.DataFrame:
@@ -1288,17 +2007,27 @@ def build_report_performance_rows(
         rows[7]["spy_pct"] = calculate_series_performance_from_date(spy_history_df, "benchmark_value", portfolio_start_date)[1]
         rows[7]["msci_pct"] = calculate_series_performance_from_date(msci_history_df, "benchmark_value", portfolio_start_date)[1]
 
-    if len(clean_history_df) >= 2:
-        last_factor = safe_float(clean_history_df["clean_growth_factor"].iloc[-1])
-        previous_factor = safe_float(clean_history_df["clean_growth_factor"].iloc[-2])
-        if last_factor not in (None, 0) and previous_factor is not None:
-            rows[0]["clean_performance_pct"] = ((last_factor / previous_factor) - 1) * 100
-    previous_day_start = get_period_start_value(history_df, today - pd.Timedelta(days=1))
-    rows[0]["clean_performance_value_usd"] = calculate_clean_performance_value(
-        rows[0]["clean_performance_pct"],
-        previous_day_start,
+    previous_day_start = None
+    report_end_date = None
+    if not history_df.empty and "portfolio_value" in history_df.columns:
+        latest_history = history_df.dropna(subset=["portfolio_value"]).copy()
+        if len(latest_history) >= 2:
+            previous_day_start = safe_float(latest_history["portfolio_value"].iloc[-2])
+            latest_end_value = safe_float(latest_history["portfolio_value"].iloc[-1])
+            if previous_day_start not in (None, 0) and latest_end_value is not None:
+                rows[0]["value_change_usd"] = latest_end_value - previous_day_start
+                rows[0]["value_change_pct"] = ((latest_end_value / previous_day_start) - 1) * 100
+            report_end_date = pd.to_datetime(latest_history["Date"].iloc[-1], errors="coerce")
+        elif len(latest_history) == 1:
+            report_end_date = pd.to_datetime(latest_history["Date"].iloc[-1], errors="coerce")
+
+    rows[0]["clean_performance_pct"] = total_daily_change_pct
+    rows[0]["clean_performance_value_usd"] = total_daily_change_usd
+    today_realized_result = calculate_realized_result_between_dates(
+        closed_positions_df,
+        report_end_date if pd.notna(report_end_date) else today,
+        report_end_date if pd.notna(report_end_date) else today,
     )
-    today_realized_result = calculate_realized_result_between_dates(closed_positions_df, today, today)
     rows[0]["clean_with_closed_value_usd"] = calculate_combined_performance_value(
         rows[0]["clean_performance_value_usd"],
         today_realized_result,
@@ -1362,21 +2091,22 @@ def get_report_change_tables(raw_df: pd.DataFrame, analysis_df: pd.DataFrame, an
 
 
 @st.cache_data(ttl=3600)
-def get_czk_rates() -> dict:
-    # Nacte jednoduche kurzy CZK/USD a CZK/EUR vcetne 1Y trendu.
-    usdczk = yf.Ticker("USDCZK=X").history(period="1y")
-    eurczk = yf.Ticker("EURCZK=X").history(period="1y")
-
-    return {
-        "CZK/USD": {
-            "value": float(usdczk["Close"].iloc[-1]),
-            "history": usdczk["Close"].round(2).tolist(),
-        },
-        "CZK/EUR": {
-            "value": float(eurczk["Close"].iloc[-1]),
-            "history": eurczk["Close"].round(2).tolist(),
-        },
-    }
+def get_czk_rates(selected_pairs: tuple[str, ...] = tuple(DEFAULT_FX_PAIRS)) -> dict:
+    # Nacte vybrane FX pary vcetne 1Y trendu.
+    rates = {}
+    for pair in selected_pairs:
+        pair_config = FX_PAIR_CONFIG.get(pair)
+        if not pair_config:
+            continue
+        history_df = yf.Ticker(pair_config["ticker"]).history(period="1y")
+        if history_df.empty:
+            continue
+        rates[pair] = {
+            "value": float(history_df["Close"].iloc[-1]),
+            "history": history_df["Close"].round(2).tolist(),
+            "suffix": pair_config.get("suffix", ""),
+        }
+    return rates
 
 
 def format_market_cap(value) -> str:
@@ -1772,10 +2502,33 @@ def build_watchlist_overview(watchlist_df: pd.DataFrame) -> pd.DataFrame:
                 "_current_price_value": current_price,
                 "_buy_plan_value": row.buy_plan,
                 "_watchlist_status": status,
+                "_distance_pct_value": distance_pct,
             }
         )
 
     return pd.DataFrame(rows)
+
+
+def sort_watchlist_priority(overview_df: pd.DataFrame) -> pd.DataFrame:
+    # Seradi kandidaty podle investicni priority, ne podle poradi v CSV.
+    if len(overview_df) == 0:
+        return overview_df.copy()
+
+    sorted_df = overview_df.copy()
+    priority_map = {
+        "V nakupni zone": 0,
+        "Pod nakupni zonou": 1,
+        "Nad nakupni zonou": 2,
+        "N/A": 3,
+    }
+    sorted_df["_priority_rank"] = sorted_df["_watchlist_status"].map(priority_map).fillna(3)
+    sorted_df["_distance_sort"] = pd.to_numeric(sorted_df["_distance_pct_value"], errors="coerce").fillna(999999.0)
+    sorted_df = sorted_df.sort_values(
+        by=["_priority_rank", "_distance_sort", "Ticker"],
+        ascending=[True, True, True],
+        na_position="last",
+    ).drop(columns=["_priority_rank", "_distance_sort"], errors="ignore")
+    return sorted_df.reset_index(drop=True)
 
 
 def style_watchlist_row(row: pd.Series) -> list[str]:
@@ -2130,9 +2883,9 @@ language = settings["language"]
 base_currency = settings["base_currency"]
 date_format_label = settings["date_format"]
 visible_columns = settings["visible_columns"]
+selected_fx_pairs = settings["fx_pairs"]
+show_fx_rates = settings["show_fx_rates"]
 apply_theme(settings["theme"])
-
-st.title(t("app_title", language))
 
 raw_df = load_portfolio()
 watchlist_df = load_watchlist()
@@ -2155,12 +2908,22 @@ with st.sidebar:
     st.markdown('<div class="sidebar-section">Menu</div>', unsafe_allow_html=True)
     current_page = st.radio(
         "Menu",
-        [t("overview", language), t("watchlist", language), t("analysis", language), t("long_term_plan", language), t("transactions", language), t("reports", language), t("settings", language)],
+        ["Dashboard", "Portfolio", "Watchlist", "Planovani", t("transactions", language), t("reports", language), t("settings", language)],
         label_visibility="collapsed",
     )
 
+planning_subpage = None
+if current_page == "Planovani":
+    planning_subpage = st.radio(
+        "Podsekce",
+        [t("analysis", language), t("long_term_plan", language)],
+        index=0,
+        horizontal=True,
+        key="planning_subpage",
+    )
+
 if current_page == t("settings", language):
-    st.subheader(t("settings", language))
+    render_page_header("Nastaveni", "Ovladej jazyk, menu, formaty a vzhled aplikace.", "System")
     with st.form("settings_form"):
         new_language = st.selectbox(t("language", language), ["cs", "en"], index=["cs", "en"].index(language))
         new_base_currency = st.selectbox(t("base_currency", language), ["USD", "EUR", "CZK"], index=["USD", "EUR", "CZK"].index(base_currency))
@@ -2169,6 +2932,15 @@ if current_page == t("settings", language):
             t("visible_columns", language),
             DEFAULT_VISIBLE_COLUMNS,
             default=visible_columns,
+        )
+        new_fx_pairs = st.multiselect(
+            t("fx_pairs", language),
+            list(FX_PAIR_CONFIG.keys()),
+            default=selected_fx_pairs,
+        )
+        new_show_fx_rates = st.checkbox(
+            t("show_fx_rates", language),
+            value=show_fx_rates,
         )
         new_theme = st.selectbox(t("theme", language), ["dark", "light"], index=["dark", "light"].index(settings["theme"]))
         save_settings_button = st.form_submit_button(t("save_settings", language))
@@ -2179,6 +2951,8 @@ if current_page == t("settings", language):
                 "base_currency": new_base_currency,
                 "date_format": new_date_format,
                 "visible_columns": new_visible_columns or DEFAULT_VISIBLE_COLUMNS,
+                "fx_pairs": new_fx_pairs or DEFAULT_FX_PAIRS,
+                "show_fx_rates": bool(new_show_fx_rates),
                 "theme": new_theme,
             }
             save_settings(settings)
@@ -2186,21 +2960,45 @@ if current_page == t("settings", language):
             st.rerun()
 
 if current_page == t("watchlist", language):
-    st.subheader(t("watchlist", language))
+    render_page_header("Watchlist", "Decision board pro kandidaty, ktere sledujes pro dalsi krok.", "Market radar")
+    watchlist_overview_data = build_watchlist_overview(watchlist_df)
+    watchlist_priority_data = sort_watchlist_priority(watchlist_overview_data)
+    in_zone_count = int((watchlist_overview_data["Status"] == "V nakupni zone").sum()) if len(watchlist_overview_data) > 0 else 0
+    below_zone_count = int((watchlist_overview_data["Status"] == "Pod nakupni zonou").sum()) if len(watchlist_overview_data) > 0 else 0
+    total_watchlist = len(watchlist_overview_data)
+    nearest_candidate = watchlist_priority_data.iloc[0]["Ticker"] if len(watchlist_priority_data) > 0 else "N/A"
+    render_kpi_cards(
+        [
+            {"label": "Sledovane tituly", "value": str(total_watchlist), "delta": "Aktivni decision board"},
+            {"label": "V nakupni zone", "value": str(in_zone_count), "delta": "Okamzite kandidaty", "tone": "positive"},
+            {"label": "Pod buy zonou", "value": str(below_zone_count), "delta": "Zajimave pod supportem"},
+            {"label": "Prvni kandidat", "value": nearest_candidate, "delta": "Vyber z aktualniho seznamu"},
+        ]
+    )
     watchlist_overview_tab, watchlist_add_tab, watchlist_edit_tab, watchlist_delete_tab = st.tabs(
         [t("watchlist_overview", language), t("add", language), t("edit", language), t("delete", language)]
     )
 
     with watchlist_overview_tab:
-        overview_df = build_watchlist_overview(watchlist_df)
+        overview_df = watchlist_overview_data.copy()
         if len(overview_df) > 0:
-            helper_columns = ["_current_price_value", "_buy_plan_value", "_watchlist_status"]
+            overview_df["Status"] = overview_df["Status"].apply(format_watchlist_badge)
+            helper_columns = ["_current_price_value", "_buy_plan_value", "_watchlist_status", "_distance_pct_value"]
             visible_overview_df = overview_df.drop(columns=helper_columns, errors="ignore")
             styled_overview_df = visible_overview_df.style.apply(
                 lambda row: style_watchlist_row(overview_df.loc[row.name])[0:len(row)],
                 axis=1,
             )
-            st.dataframe(styled_overview_df, use_container_width=True, hide_index=True)
+            primary_col, secondary_col = st.columns([1.5, 0.8])
+            with primary_col:
+                render_section_intro("Decision board", "Hlavni prehled s barevnymi statusy, buy zónami a prioritami.")
+                st.dataframe(styled_overview_df, use_container_width=True, hide_index=True)
+            with secondary_col:
+                render_section_intro("Priority", "Rychly shortlist kandidatu, kteri si zaslouzi pozornost.")
+                priority_source_df = watchlist_priority_data.copy()
+                priority_source_df["Status"] = priority_source_df["Status"].apply(format_watchlist_badge)
+                priority_df = priority_source_df[["Ticker", "Status", "Vzdalenost od buy zony"]].head(6)
+                st.dataframe(priority_df, use_container_width=True, hide_index=True)
         else:
             st.info("Watchlist je prazdny.")
 
@@ -2303,14 +3101,28 @@ if current_page == t("watchlist", language):
         else:
             st.info("Watchlist je prazdny.")
 
-if current_page == t("analysis", language):
-    st.subheader(t("analysis", language))
+if current_page == "Planovani" and planning_subpage == t("analysis", language):
+    render_page_header("Planovani", "Portfolio plan se zamerenim na vybrane firmy, tezi a dalsi rozhodnuti.", "Strategy")
     analysis_overview_df = build_analysis_overview(raw_df, analysis_df, base_currency)
     analysis_tickers = analysis_overview_df["Ticker"].tolist() if len(analysis_overview_df) > 0 else []
 
     if analysis_overview_df.empty:
         st.info("Zatim nejsou dostupne zadne tickery pro analyzu.")
     else:
+        active_status_count = int((analysis_overview_df["Status"] != "N/A").sum())
+        review_count = int((analysis_overview_df["Status"] == "Review").sum())
+        avg_upside_value = pd.to_numeric(
+            analysis_overview_df["Upside %"].astype(str).str.replace(" %", "", regex=False),
+            errors="coerce",
+        ).mean()
+        render_kpi_cards(
+            [
+                {"label": "Pokryte firmy", "value": str(len(analysis_overview_df)), "delta": "Tituly s detailnim planem"},
+                {"label": "Aktivni statusy", "value": str(active_status_count), "delta": "Building / Hold / Review"},
+                {"label": "K revizi", "value": str(review_count), "delta": "Ticker ready for review"},
+                {"label": "Prumerny upside", "value": format_percent_metric(avg_upside_value), "delta": "Napric sledovanymi firmami"},
+            ]
+        )
         display_overview_df = analysis_overview_df[
             [
                 "Ticker",
@@ -2325,24 +3137,6 @@ if current_page == t("analysis", language):
                 "Posledni revize",
             ]
         ]
-        st.dataframe(
-            display_overview_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Ticker": st.column_config.TextColumn(help="Burzovni zkratka akcie nebo ETF."),
-                "Spolecnost": st.column_config.TextColumn(help="Nazev firmy nebo fondu."),
-                "Aktualni cena": st.column_config.TextColumn(help="Posledni dostupna trzni cena."),
-                "Prumerna nakupni cena": st.column_config.TextColumn(help="Prumerna cena, za kterou mas pozici nakoupenou."),
-                "Cilova cena": st.column_config.TextColumn(help="Cena, na kterou cilis podle sveho investicniho planu."),
-                "Upside %": st.column_config.TextColumn(help="O kolik procent je cilova cena vyse nebo nize oproti aktualni cene."),
-                "Status": st.column_config.TextColumn(help="Aktualni stav tveho planu, napriklad Hold, Review nebo Exit."),
-                "Conviction": st.column_config.TextColumn(help="Jak silne veris investicni tezi pro danou akcii."),
-                "Dalsi akce": st.column_config.TextColumn(help="Co chces udelat jako dalsi krok, napriklad cekat, dokoupit nebo trimovat."),
-                "Posledni revize": st.column_config.TextColumn(help="Kdy jsi plan naposledy upravil."),
-            },
-        )
-
         selected_analysis_ticker = st.selectbox("Ticker", analysis_tickers)
         selected_plan = analysis_df[analysis_df["ticker"] == selected_analysis_ticker]
         selected_history = analysis_history_df[analysis_history_df["ticker"] == selected_analysis_ticker].copy()
@@ -2360,11 +3154,30 @@ if current_page == t("analysis", language):
                 if len(watchlist_match) > 0 and pd.notna(watchlist_match.iloc[0]["company"]):
                     company_name = watchlist_match.iloc[0]["company"]
 
-        detail_col, plan_col = st.columns([1.3, 0.9])
+        overview_col, detail_col = st.columns([1.45, 1])
+
+        with overview_col:
+            render_section_intro("Coverage overview", "Dominantni prehled firem, upside a dalsiho kroku.")
+            st.dataframe(
+                display_overview_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Ticker": st.column_config.TextColumn(help="Burzovni zkratka akcie nebo ETF."),
+                    "Spolecnost": st.column_config.TextColumn(help="Nazev firmy nebo fondu."),
+                    "Aktualni cena": st.column_config.TextColumn(help="Posledni dostupna trzni cena."),
+                    "Prumerna nakupni cena": st.column_config.TextColumn(help="Prumerna cena, za kterou mas pozici nakoupenou."),
+                    "Cilova cena": st.column_config.TextColumn(help="Cena, na kterou cilis podle sveho investicniho planu."),
+                    "Upside %": st.column_config.TextColumn(help="O kolik procent je cilova cena vyse nebo nize oproti aktualni cene."),
+                    "Status": st.column_config.TextColumn(help="Aktualni stav tveho planu, napriklad Hold, Review nebo Exit."),
+                    "Conviction": st.column_config.TextColumn(help="Jak silne veris investicni tezi pro danou akcii."),
+                    "Dalsi akce": st.column_config.TextColumn(help="Co chces udelat jako dalsi krok, napriklad cekat, dokoupit nebo trimovat."),
+                    "Posledni revize": st.column_config.TextColumn(help="Kdy jsi plan naposledy upravil."),
+                },
+            )
 
         with detail_col:
-            st.subheader(t("analysis_overview", language))
-
+            render_section_intro("Vybrana firma", "Detail zvolene pozice a investicniho planu.")
             st.write(f"**Ticker:** {selected_analysis_ticker}")
             st.write(f"**Spolecnost:** {company_name}")
             st.write(f"**Aktualni cena:** {selected_overview['Aktualni cena']}")
@@ -2386,8 +3199,10 @@ if current_page == t("analysis", language):
             else:
                 st.info("Pro tento ticker zatim neni ulozeny zadny plan.")
 
+        plan_col, history_col = st.columns([0.95, 1.25])
+
         with plan_col:
-            st.subheader(t("analysis_update", language))
+            render_section_intro("Editace planu", "Kompaktni formular ponechany jako sekundarni blok.")
             current_plan = selected_plan.iloc[0] if len(selected_plan) > 0 else pd.Series(dtype=object)
 
             with st.form("analysis_plan_form"):
@@ -2436,10 +3251,30 @@ if current_page == t("analysis", language):
                     st.success("Plan byl ulozen.")
                     st.rerun()
 
-        st.subheader(t("analysis_decision", language))
-        decision_col, history_col = st.columns([1, 1.2])
+        with history_col:
+            render_section_intro("Historie rozhodnuti", "Sekundarni blok pod hlavnim coverage overview.")
+            if len(selected_history) > 0:
+                selected_history["decision_date"] = selected_history["decision_date"].apply(
+                    lambda value: format_date_display(value, date_format_label)
+                )
+                selected_history = selected_history.rename(
+                    columns={
+                        "decision_date": "Datum",
+                        "decision_type": "Typ",
+                        "price": "Cena",
+                        "plan_text": "Plan",
+                        "comment": "Komentar",
+                    }
+                )
+                st.dataframe(
+                    selected_history[["Datum", "Typ", "Cena", "Plan", "Komentar"]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("Historie rozhodnuti je zatim prazdna.")
 
-        with decision_col:
+        with st.expander("Pridat rozhodnuti"):
             with st.form("analysis_decision_form"):
                 decision_date = st.date_input("Datum rozhodnuti")
                 decision_type = st.selectbox("Typ rozhodnuti", ["Poznamka", "Revize", "Dokup plan", "Prodej plan"])
@@ -2466,33 +3301,22 @@ if current_page == t("analysis", language):
                     st.success("Rozhodnuti bylo ulozeno.")
                     st.rerun()
 
-        with history_col:
-            st.write("**Historie rozhodnuti**")
-            if len(selected_history) > 0:
-                selected_history["decision_date"] = selected_history["decision_date"].apply(
-                    lambda value: format_date_display(value, date_format_label)
-                )
-                selected_history = selected_history.rename(
-                    columns={
-                        "decision_date": "Datum",
-                        "decision_type": "Typ",
-                        "price": "Cena",
-                        "plan_text": "Plan",
-                        "comment": "Komentar",
-                    }
-                )
-                st.dataframe(
-                    selected_history[["Datum", "Typ", "Cena", "Plan", "Komentar"]],
-                    use_container_width=True,
-                    hide_index=True,
-                )
-            else:
-                st.info("Historie rozhodnuti je zatim prazdna.")
-
-if current_page == t("long_term_plan", language):
-    st.subheader(t("long_term_plan", language))
+if current_page == "Planovani" and planning_subpage == t("long_term_plan", language):
+    render_page_header("Dlouhodoby plan", "Planning dashboard pro cile, trajektorii majetku a pravidelne kontroly.", "Capital planning")
 
     if len(long_term_plans_df) > 0:
+        total_target_value = float(pd.to_numeric(long_term_plans_df["target_value"], errors="coerce").fillna(0.0).sum())
+        total_monthly_contribution = float(pd.to_numeric(long_term_plans_df["monthly_contribution"], errors="coerce").fillna(0.0).sum())
+        average_expected_return = float(pd.to_numeric(long_term_plans_df["expected_return_pct"], errors="coerce").dropna().mean()) if len(long_term_plans_df) > 0 else None
+        render_kpi_cards(
+            [
+                {"label": "Aktivni plany", "value": str(len(long_term_plans_df)), "delta": "Dlouhodobe scenare"},
+                {"label": "Cilova hodnota", "value": format_currency_metric(total_target_value, base_currency), "delta": "Soucet vsech planu"},
+                {"label": "Mesicni vklad", "value": format_currency_metric(total_monthly_contribution, base_currency), "delta": "Kapital flow"},
+                {"label": "Prumerny vynos", "value": format_percent_metric(average_expected_return), "delta": "Napric plany"},
+            ]
+        )
+        render_section_intro("Prehled planu", "Horni seznam planu funguje jako vstupni rozcestnik pro detail a kontrolu.")
         st.dataframe(
             long_term_plans_df.rename(
                 columns={
@@ -2514,9 +3338,21 @@ if current_page == t("long_term_plan", language):
         st.info("Zatim nemas ulozeny zadny dlouhodoby plan.")
 
     plan_names = long_term_plans_df["plan_name"].tolist() if len(long_term_plans_df) > 0 else []
-    selected_plan_name = st.selectbox("Vyber plan", plan_names) if plan_names else None
-    selected_plan = long_term_plans_df[long_term_plans_df["plan_name"] == selected_plan_name].iloc[0] if selected_plan_name else pd.Series(dtype=object)
-    selected_checks = long_term_checks_df[long_term_checks_df["plan_name"] == selected_plan_name].copy() if selected_plan_name else pd.DataFrame()
+    planning_mode = st.radio(
+        "Rezim planu",
+        ["Existujici plan", "Novy plan"],
+        horizontal=True,
+        key="long_term_plan_page_mode",
+    )
+    if planning_mode == "Existujici plan" and plan_names:
+        selected_plan_name = st.selectbox("Vyber plan", plan_names)
+        selected_plan = long_term_plans_df[long_term_plans_df["plan_name"] == selected_plan_name].iloc[0]
+        selected_checks = long_term_checks_df[long_term_checks_df["plan_name"] == selected_plan_name].copy()
+    else:
+        selected_plan_name = None
+        selected_plan = pd.Series(dtype=object)
+        selected_checks = pd.DataFrame()
+
     if len(selected_checks) > 0:
         selected_checks["period_year_sort"] = selected_checks["period_label"].apply(extract_year)
         selected_checks["period_date_sort"] = pd.to_datetime(selected_checks["period_date"], errors="coerce")
@@ -2525,24 +3361,52 @@ if current_page == t("long_term_plan", language):
             na_position="last",
         ).drop(columns=["period_year_sort", "period_date_sort"])
 
-    st.subheader("Financni kalkulacka budouci hodnoty")
-    calc_col1, calc_col2, calc_col3, calc_col4 = st.columns(4)
-    calc_start_value = calc_col1.number_input("Start value", min_value=0.0, value=safe_number_input_value(selected_plan.get("start_value", 0.0)), step=100.0)
-    calc_monthly_contribution = calc_col2.number_input("Mesicni vklad", min_value=0.0, value=safe_number_input_value(selected_plan.get("monthly_contribution", 0.0)), step=50.0)
-    calc_expected_return = calc_col3.number_input("Vynos %", min_value=0.0, value=safe_number_input_value(selected_plan.get("expected_return_pct", 0.0)), step=0.5)
     calculated_years = 10.0
     start_year_for_calc = extract_year(selected_plan.get("start_period", ""))
     target_year_for_calc = extract_year(selected_plan.get("target_period", ""))
     if start_year_for_calc is not None and target_year_for_calc is not None and target_year_for_calc >= start_year_for_calc:
         calculated_years = float(target_year_for_calc - start_year_for_calc + 1)
-    calc_years = calc_col4.number_input("Pocet let", min_value=0.0, value=calculated_years, step=1.0)
-    future_value = calculate_future_value(calc_start_value, calc_monthly_contribution, calc_expected_return, calc_years)
-    st.metric("Budouci hodnota", f"{base_currency} {future_value:,.2f}")
 
-    plan_form_col, checks_col = st.columns([1, 1.15])
+    top_plan_col, top_calc_col = st.columns([1.35, 0.9])
+    with top_plan_col:
+        render_section_intro("Trajektorie planu", "Dominantni blok s vyvojem planu a skutecnosti.")
+        if selected_plan_name:
+            chart_df = build_long_term_chart_df(selected_plan, selected_checks)
+            if len(chart_df) > 0:
+                chart_fig = go.Figure()
+                chart_fig.add_trace(go.Scatter(x=chart_df["Period"], y=chart_df["Planned"], mode="lines+markers", name="Plan"))
+                chart_fig.add_trace(go.Scatter(x=chart_df["Period"], y=chart_df["Actual"], mode="lines+markers", name="Skutecnost"))
+                chart_fig.update_layout(
+                    margin=dict(l=20, r=20, t=20, b=20),
+                    xaxis_title="Obdobi",
+                    yaxis_title=f"Hodnota ({base_currency})",
+                )
+                st.plotly_chart(chart_fig, use_container_width=True)
+            else:
+                st.info("Trajektorie se zobrazi po ulozeni planu nebo kontrol.")
+        else:
+            st.info("Vyber plan pro zobrazeni trajektorie.")
+
+    with top_calc_col:
+        render_section_intro("Kalkulacka", "Kompaktni model budouci hodnoty a rychla kontrola mezery.")
+        calc_start_value = st.number_input("Start value", min_value=0.0, value=safe_number_input_value(selected_plan.get("start_value", 0.0)), step=100.0, key="lt_calc_start_value")
+        calc_monthly_contribution = st.number_input("Mesicni vklad", min_value=0.0, value=safe_number_input_value(selected_plan.get("monthly_contribution", 0.0)), step=50.0, key="lt_calc_monthly_contribution")
+        calc_expected_return = st.number_input("Vynos %", min_value=0.0, value=safe_number_input_value(selected_plan.get("expected_return_pct", 0.0)), step=0.5, key="lt_calc_expected_return")
+        calc_years = st.number_input("Pocet let", min_value=0.0, value=calculated_years, step=1.0, key="lt_calc_years")
+        future_value = calculate_future_value(calc_start_value, calc_monthly_contribution, calc_expected_return, calc_years)
+        completion_avg = pd.to_numeric(selected_checks["completion_pct"], errors="coerce").mean() if len(selected_checks) > 0 else None
+        selected_target_value = safe_float(selected_plan.get("target_value", None))
+        plan_gap_value = (selected_target_value - future_value) if selected_target_value is not None else None
+        st.metric("Budouci hodnota", f"{base_currency} {future_value:,.2f}")
+        st.metric("Mezera proti cili", format_currency_metric(plan_gap_value, base_currency))
+        st.metric("Prumerne splneni kontrol", format_percent_metric(completion_avg))
+
+    plan_form_col, checks_col = st.columns([0.92, 1.2])
 
     with plan_form_col:
-        st.subheader("Plan")
+        render_section_intro("Editace planu", "Formular zustava sekundarni vedle analytickych bloku.")
+        if planning_mode == "Novy plan":
+            st.caption("Rezim noveho planu: formular je prazdny a ulozeni vytvori novy zaznam.")
         with st.form("long_term_plan_form"):
             plan_name = st.text_input("Nazev planu", value=str(selected_plan.get("plan_name", "")))
             start_period = st.text_input("Zacatek obdobi", value=str(selected_plan.get("start_period", "")), placeholder="Napriklad 2026")
@@ -2578,7 +3442,7 @@ if current_page == t("long_term_plan", language):
                     st.rerun()
 
     with checks_col:
-        st.subheader("Kontroly planu")
+        render_section_intro("Kontroly planu", "Operativni prehled odchylek, splneni a dalsich kroku.")
         if selected_plan_name:
             with st.container(border=True):
                 st.write("**Automaticke generovani kontrol**")
@@ -2586,7 +3450,7 @@ if current_page == t("long_term_plan", language):
 
                 existing_auto_rows = selected_checks[selected_checks["source"].astype(str).str.lower() == "auto"] if len(selected_checks) > 0 else pd.DataFrame()
                 if len(selected_checks) > 0:
-                    st.warning("Pro tento plan uz kontroly existuji. Muzeš bud prepocitat automaticke roky, nebo jen doplnit chybejici.")
+                    st.warning("Pro tento plan uz kontroly existuji. Muzes bud prepocitat automaticke roky, nebo jen doplnit chybejici.")
 
                 generation_mode = st.radio(
                     "Rezim generovani",
@@ -2743,21 +3607,10 @@ if current_page == t("long_term_plan", language):
                         st.success("Kontrola planu byla ulozena.")
                         st.rerun()
         else:
-            st.info("Nejdriv uloz alespon jeden plan.")
-
-    if selected_plan_name:
-        st.subheader("Trajektorie majetku")
-        chart_df = build_long_term_chart_df(selected_plan, selected_checks)
-        if len(chart_df) > 0:
-            chart_fig = go.Figure()
-            chart_fig.add_trace(go.Scatter(x=chart_df["Period"], y=chart_df["Planned"], mode="lines+markers", name="Plan"))
-            chart_fig.add_trace(go.Scatter(x=chart_df["Period"], y=chart_df["Actual"], mode="lines+markers", name="Skutecnost"))
-            chart_fig.update_layout(
-                margin=dict(l=20, r=20, t=20, b=20),
-                xaxis_title="Obdobi",
-                yaxis_title=f"Hodnota ({base_currency})",
-            )
-            st.plotly_chart(chart_fig, use_container_width=True)
+            if planning_mode == "Novy plan":
+                st.info("Nejdriv uloz novy plan. Potom se zobrazi trajektorie i kontroly.")
+            else:
+                st.info("Nejdriv uloz alespon jeden plan.")
 
 # Hlavni prehled pracuje se sloucenymi pozicemi.
 df = aggregate_portfolio(raw_df)
@@ -2826,15 +3679,226 @@ df["daily_change_position_usd"] = df["daily_change_usd"] * df["shares"]
 df["daily_change_base"] = df["daily_change_position_usd"].apply(lambda value: convert_from_usd(value, base_currency))
 df["value_base"] = df["value_usd"].apply(lambda value: convert_from_usd(value, base_currency))
 df["profit_loss_base"] = df["profit_loss_usd"].apply(lambda value: convert_from_usd(value, base_currency))
+df["price_display"] = df.apply(lambda row: format_price_with_currency(row["price"], row["currency"]), axis=1) if len(df) > 0 else []
+df["buy_price_display"] = df.apply(
+    lambda row: format_price_with_currency(row["buy_price"], row["currency"] if pd.notna(row["currency"]) else "USD"),
+    axis=1,
+) if len(df) > 0 else []
+df["company_display"] = df["company"].fillna("").replace("", "N/A")
+df["pe_display"] = df["pe"].apply(format_number)
+df["eps_display"] = df["eps"].apply(format_number)
+df["earnings_yield_display"] = df["earnings_yield"].apply(lambda value: format_number(value, " %"))
+df["beta_display"] = df["beta"].apply(format_number)
 
 total_value = df["value_base"].sum()
 total_profit_loss = df["profit_loss_base"].sum()
 last_updated = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
 transaction_ticker_map = build_transaction_ticker_map(raw_df, watchlist_df)
 transaction_summary = process_transactions(transactions_df, transaction_ticker_map, base_currency)
+open_transaction_tickers = get_open_transaction_tickers(transactions_df)
+open_lot_transactions_df = build_open_lot_transactions(transactions_df, open_transaction_tickers)
+
+if current_page == "Dashboard":
+    render_page_header("Dashboard", "Executive overview s nejdulezitejsimi metrikami, vykonem, alokaci a top movers.", "Executive overview")
+    total_cost_base = convert_from_usd(df["cost_usd"].sum(), base_currency) if len(df) > 0 else 0.0
+    total_return_pct = (total_profit_loss / total_cost_base * 100) if total_cost_base else None
+    total_daily_change = float(df["daily_change_base"].sum()) if len(df) > 0 else 0.0
+    previous_total_value = total_value - total_daily_change
+    total_daily_change_pct = (total_daily_change / previous_total_value * 100) if previous_total_value else None
+    render_kpi_cards(
+        [
+            {"label": "Hodnota portfolia", "value": format_currency_metric(total_value, base_currency), "delta": "Executive view"},
+            {"label": "Denni zmena", "value": format_currency_metric(total_daily_change, base_currency), "delta": format_percent_metric(total_daily_change_pct)},
+            {"label": "Celkovy zisk", "value": format_currency_metric(total_profit_loss, base_currency), "delta": format_percent_metric(total_return_pct)},
+            {"label": "Zhodnoceni", "value": format_percent_metric(total_return_pct), "delta": "Od nakupu"},
+            {"label": "Posledni update", "value": last_updated, "delta": "Live market snapshot"},
+        ]
+    )
+
+    history_card, side_card = st.columns([1.7, 1])
+    with history_card:
+        render_section_intro("Vykon portfolia", "Dominantni pohled na cisty vykon portfolia proti SPY.")
+        dashboard_history_df, _ = build_transaction_portfolio_history(
+            open_lot_transactions_df,
+            transaction_ticker_map,
+            period="max",
+            include_tickers=open_transaction_tickers,
+        )
+        dashboard_clean_history_df = build_clean_performance_history_from_transactions(
+            dashboard_history_df,
+            open_lot_transactions_df,
+            include_tickers=open_transaction_tickers,
+        )
+        dashboard_benchmark_df = build_benchmark_history("max", BENCHMARKS["SPY"])
+        if not dashboard_clean_history_df.empty and not dashboard_benchmark_df.empty:
+            investment_start_date = pd.to_datetime(dashboard_clean_history_df["Date"], errors="coerce").min()
+            investment_end_date = pd.to_datetime(dashboard_clean_history_df["Date"], errors="coerce").max()
+            if pd.notna(investment_start_date):
+                dashboard_benchmark_df = dashboard_benchmark_df[
+                    pd.to_datetime(dashboard_benchmark_df["Date"], errors="coerce") >= investment_start_date
+                ].copy()
+            if pd.notna(investment_end_date):
+                dashboard_benchmark_df = dashboard_benchmark_df[
+                    pd.to_datetime(dashboard_benchmark_df["Date"], errors="coerce") <= investment_end_date
+                ].copy()
+            dashboard_compare_df = dashboard_clean_history_df.merge(
+                dashboard_benchmark_df[["Date", "benchmark_value"]],
+                on="Date",
+                how="inner",
+            )
+            dashboard_compare_df = dashboard_compare_df.dropna(subset=["clean_return_pct", "benchmark_value"])
+            dashboard_compare_df["benchmark_return_pct"] = normalize_to_percent(dashboard_compare_df["benchmark_value"])
+            dashboard_compare_df = dashboard_compare_df.dropna(subset=["benchmark_return_pct"])
+            dashboard_fig = go.Figure()
+            dashboard_fig.add_trace(
+                go.Scatter(
+                    x=dashboard_compare_df["Date"],
+                    y=dashboard_compare_df["clean_return_pct"],
+                    mode="lines",
+                    name="Cisty vykon",
+                )
+            )
+            dashboard_fig.add_trace(
+                go.Scatter(
+                    x=dashboard_compare_df["Date"],
+                    y=dashboard_compare_df["benchmark_return_pct"],
+                    mode="lines",
+                    name="SPY",
+                )
+            )
+            dashboard_fig.update_layout(margin=dict(l=20, r=20, t=20, b=20), yaxis_title="Cisty vykon (%)", xaxis_title="Datum")
+            st.plotly_chart(dashboard_fig, use_container_width=True)
+        else:
+            st.info("Pro dashboard zatim nejsou dostupna historicka data.")
+    with side_card:
+        render_section_intro("Top movers", "Nejlepsi a nejslabsi pohyb dne v kompaktnim prehledu.")
+        if len(df) > 0:
+            movers_df = df[["ticker", "company_display", "value_base", "daily_change_base", "daily_change_pct"]].copy()
+            movers_df = movers_df.rename(
+                columns={
+                    "ticker": "Ticker",
+                    "company_display": "Spolecnost",
+                    "value_base": "Aktualni hodnota",
+                    "daily_change_base": "Denni pohyb",
+                    "daily_change_pct": "Denni pohyb %",
+                }
+            )
+            movers_df["Aktualni hodnota"] = movers_df["Aktualni hodnota"].apply(
+                lambda value: format_currency_metric(value, base_currency)
+            )
+            movers_df["Denni pohyb"] = movers_df["Denni pohyb"].apply(
+                lambda value: format_currency_metric(value, base_currency)
+            )
+            movers_df["Denni pohyb % raw"] = pd.to_numeric(movers_df["Denni pohyb %"], errors="coerce")
+            movers_df["Denni pohyb %"] = movers_df["Denni pohyb % raw"].apply(
+                lambda value: "N/A" if pd.isna(value) else f"{value:.2f} %"
+            )
+
+            top_gainers_df = movers_df[movers_df["Denni pohyb % raw"] > 0].sort_values(
+                ["Denni pohyb % raw"], ascending=False
+            )
+            top_losers_df = movers_df[movers_df["Denni pohyb % raw"] < 0].sort_values(
+                ["Denni pohyb % raw"], ascending=True
+            )
+
+            st.caption("Top gainers dnes")
+            if len(top_gainers_df) > 0:
+                st.dataframe(
+                    top_gainers_df[["Ticker", "Aktualni hodnota", "Denni pohyb %", "Denni pohyb"]].head(3),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("N/A")
+
+            st.caption("Top losers dnes")
+            if len(top_losers_df) > 0:
+                st.dataframe(
+                    top_losers_df[["Ticker", "Aktualni hodnota", "Denni pohyb %", "Denni pohyb"]].head(3),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.info("N/A")
+
+            render_section_intro("Dnes vs trh", "Kompaktni procentni srovnani portfolia a hlavnich benchmarku za posledni obchodni den.")
+            market_rows = [
+                {
+                    "Instrument": "Portfolio",
+                    "Denni zmena %": "N/A" if total_daily_change_pct is None else f"{total_daily_change_pct:.2f} %",
+                    "Rozdil vs portfolio": "N/A",
+                }
+            ]
+            for benchmark_label in ["SPY", "MSCI World ETF", "Nasdaq 100"]:
+                benchmark_history = get_price_history(BENCHMARKS[benchmark_label], "5d")
+                benchmark_change_pct = get_latest_history_change_pct(benchmark_history)
+                difference_vs_portfolio = (
+                    None
+                    if benchmark_change_pct is None or total_daily_change_pct is None
+                    else total_daily_change_pct - benchmark_change_pct
+                )
+                market_rows.append(
+                    {
+                        "Instrument": benchmark_label,
+                        "Denni zmena %": "N/A" if benchmark_change_pct is None else f"{benchmark_change_pct:.2f} %",
+                        "Rozdil vs portfolio": "N/A" if difference_vs_portfolio is None else f"{difference_vs_portfolio:.2f} p. b.",
+                    }
+                )
+            st.dataframe(pd.DataFrame(market_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("N/A")
+
+    allocation_col, watchlist_col = st.columns([1.1, 1])
+    with allocation_col:
+        render_section_intro("Alokace", "Aktualni rozlozeni portfolia podle nejvetsich pozic.")
+        if len(df) > 0 and total_value != 0:
+            allocation_fig = px.pie(df, names="ticker", values="value_base", hole=0.58)
+            allocation_fig.update_layout(margin=dict(l=20, r=20, t=20, b=20), showlegend=True)
+            st.plotly_chart(allocation_fig, use_container_width=True)
+        else:
+            st.info("N/A")
+    with watchlist_col:
+        render_section_intro("Akcni radar", "Kratsi seznam kandidatu z watchlistu a jejich aktualni status.")
+        dashboard_watchlist_df = sort_watchlist_priority(build_watchlist_overview(watchlist_df))
+        if len(dashboard_watchlist_df) > 0:
+            dashboard_watchlist_df["Status"] = dashboard_watchlist_df["Status"].apply(format_watchlist_badge)
+            dashboard_watchlist_display = dashboard_watchlist_df[
+                ["Ticker", "Aktualni cena", "Buy zone", "Plan nakupu", "Status"]
+            ].head(6)
+            dashboard_watchlist_hidden = dashboard_watchlist_df[
+                ["_current_price_value", "_buy_plan_value", "_watchlist_status"]
+            ].head(6)
+
+            def style_dashboard_watchlist_row(row: pd.Series) -> list[str]:
+                hidden_row = dashboard_watchlist_hidden.loc[row.name]
+                current_price = hidden_row.get("_current_price_value")
+                buy_plan = hidden_row.get("_buy_plan_value")
+                status = hidden_row.get("_watchlist_status")
+
+                if pd.notna(current_price) and pd.notna(buy_plan) and current_price <= buy_plan:
+                    return ["background-color: rgba(34, 197, 94, 0.22); border-left: 3px solid #22c55e"] * len(row)
+                if status in ["V nakupni zone", "Pod nakupni zonou"]:
+                    return ["background-color: rgba(34, 197, 94, 0.12)"] * len(row)
+                return [""] * len(row)
+
+            st.dataframe(
+                dashboard_watchlist_display.style.apply(style_dashboard_watchlist_row, axis=1),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("N/A")
 
 if current_page == t("transactions", language):
-    st.subheader(t("transactions", language))
+    render_page_header("Transakce", "Evidence obchodu, otevrenych lotu, uzavrenych pozic a danoveho pohledu.", "Execution")
+    render_kpi_cards(
+        [
+            {"label": "Realizovany vysledek", "value": format_currency_metric(transaction_summary["realized_total_base"], base_currency), "delta": "Uzavrene obchody"},
+            {"label": "Nerealizovany vysledek", "value": format_currency_metric(transaction_summary["unrealized_total_base"], base_currency), "delta": "Aktualne otevrene pozice"},
+            {"label": "Celkovy vysledek", "value": format_currency_metric(transaction_summary["total_result_base"], base_currency), "delta": "Realized + unrealized"},
+            {"label": "Uzavrene obchody", "value": str(len(transaction_summary["closed_positions"])), "delta": "FIFO evidence"},
+        ]
+    )
     all_transactions_tab, open_positions_tab, closed_positions_tab, tax_overview_tab = st.tabs(
         ["Vsechny transakce", "Otevrene pozice", "Uzavrene pozice", "Danovy prehled"]
     )
@@ -2843,6 +3907,7 @@ if current_page == t("transactions", language):
     annual_summary_df = transaction_summary["annual_summary"].copy()
 
     with all_transactions_tab:
+        render_section_intro("Vsechny transakce", "Hlavni evidence obchodnich zaznamu a navazujicich uprav.")
         st.caption("Jednoducha evidence transakci. Otevrene a uzavrene pozice se pocitaji metodou FIFO.")
         trans_col1, trans_col2, trans_col3 = st.columns(3)
         trans_col1.metric("Realizovany vysledek", f"{base_currency} {transaction_summary['realized_total_base']:,.2f}")
@@ -3010,6 +4075,7 @@ if current_page == t("transactions", language):
                 st.info("N/A")
 
     with open_positions_tab:
+        render_section_intro("Otevrene pozice", "Aktualni loty po zapocteni nakupu, prodeju a poplatku.")
         st.caption("Aktualne otevrene loty po zapocteni nakupu, prodeju a poplatku.")
         if len(open_positions_df) > 0:
             open_positions_display = open_positions_df.copy()
@@ -3039,6 +4105,7 @@ if current_page == t("transactions", language):
             st.info("N/A")
 
     with closed_positions_tab:
+        render_section_intro("Uzavrene pozice", "Historie realizovanych obchodu sparovana metodou FIFO.")
         st.caption("Uzavrene obchody sparovane jednoduse metodou FIFO.")
         if len(closed_positions_df) > 0:
             closed_positions_display = closed_positions_df.copy()
@@ -3077,6 +4144,7 @@ if current_page == t("transactions", language):
             st.info("N/A")
 
     with tax_overview_tab:
+        render_section_intro("Danovy prehled", "Rocni souhrn uzavrenych obchodu a export pracovniho prehledu.")
         st.caption("Jednoduchy evidencni danovy prehled z uzavrenych obchodu. Neni to plna danova legislativa, ale prakticky rocni souhrn.")
         st.caption("Podle Financni spravy se u cennych papiru nejdriv posuzuje limit prijmu 100 000 Kc a az potom casovy test; osvobozeni nelze kombinovat. Sloupce mimo 3lety test proto ber jako orientacni pracovni pohled.")
         if len(annual_summary_df) > 0:
@@ -3167,12 +4235,24 @@ if current_page == t("transactions", language):
             st.info("N/A")
 
 if current_page == t("reports", language):
-    st.subheader(t("reports", language))
+    render_page_header("Reporty", "Vykonnost, benchmark, zmeny a riziko v premium reportovacim rozlozeni.", "Insights")
+    reports_total_result_base = transaction_summary["total_result_base"]
+    reports_total_cost_base = total_value - total_profit_loss
+    reports_total_return_pct = (reports_total_result_base / reports_total_cost_base * 100) if reports_total_cost_base else None
+    render_kpi_cards(
+        [
+            {"label": "Hodnota portfolia", "value": format_currency_metric(total_value, base_currency), "delta": "Aktualni snapshot"},
+            {"label": "Celkovy vysledek", "value": format_currency_metric(reports_total_result_base, base_currency), "delta": "Vcetne realizovanych pozic"},
+            {"label": "Zhodnoceni", "value": format_percent_metric(reports_total_return_pct), "delta": "Vcetne realizovanych pozic"},
+            {"label": "Posledni update", "value": last_updated, "delta": "Reporting layer"},
+        ]
+    )
     report_summary_tab, report_performance_tab, report_benchmark_tab, report_changes_tab, report_risk_tab = st.tabs(
-        ["Souhrn", "Vykon", "Benchmark", "Zmeny", "Rozdeleni a riziko"]
+        ["Souhrn", "Vykon", "Benchmark", "Zmeny", "Riziko"]
     )
 
     with report_summary_tab:
+        render_section_intro("Executive summary", "Rychly souhrn portfolia, pozic a vysledku.")
         st.caption("Rychly souhrn aktualniho stavu portfolia a nejdulezitejsich metrik.")
         summary_col1, summary_col2, summary_col3 = st.columns(3)
         summary_col1.metric("Aktualni hodnota portfolia", f"{base_currency} {total_value:,.2f}")
@@ -3198,14 +4278,39 @@ if current_page == t("reports", language):
         result_col3.metric("Celkovy vysledek", f"{base_currency} {transaction_summary['total_result_base']:,.2f}")
 
     with report_performance_tab:
+        render_section_intro("Vykon", "Hlavni graf a tabulka cisteho vykonu proti portfolio value.")
         st.caption("Zmena hodnoty ukazuje, o kolik se portfolio zvetsilo nebo zmensilo. Cisty vykon se snazi odfiltrovat vliv novych nakupu. Radky 2025, 2024 a 2023 predstavuji cele kalendarni roky.")
-        full_history_df, missing_report_tickers = build_portfolio_history(raw_df, "max")
-        clean_history_df = build_clean_performance_history(full_history_df, raw_df)
+        full_history_df, missing_report_tickers = build_transaction_portfolio_history(
+            open_lot_transactions_df,
+            transaction_ticker_map,
+            period="max",
+            include_tickers=open_transaction_tickers,
+        )
+        clean_history_df = build_clean_performance_history_from_transactions(
+            full_history_df,
+            open_lot_transactions_df,
+            include_tickers=open_transaction_tickers,
+        )
+        full_history_with_closed_df, _ = build_transaction_portfolio_history(
+            transactions_df,
+            transaction_ticker_map,
+            period="max",
+            include_tickers=None,
+        )
+        clean_with_closed_history_df = build_clean_with_closed_history(
+            clean_history_df,
+            transaction_summary["closed_positions"],
+        )
+        smooth_clean_with_closed_history_df = build_account_clean_performance_history(
+            full_history_with_closed_df,
+            transactions_df,
+            include_tickers=None,
+        )
         spy_history_df = build_benchmark_history("max", BENCHMARKS["SPY"])
         msci_history_df = build_benchmark_history("max", BENCHMARKS["MSCI World ETF"])
         performance_view = st.radio(
             "Zobrazeni",
-            ["Hodnota portfolia", "Cisty vykon", "Oboje"],
+            ["Cisty vykon", "Hodnota portfolia", "Oboje"],
             horizontal=True,
             key="report_performance_view",
         )
@@ -3248,7 +4353,13 @@ if current_page == t("reports", language):
         if performance_view in ["Hodnota portfolia", "Oboje"]:
             performance_columns.extend(["Zmena hodnoty", "Zmena hodnoty %"])
         if performance_view in ["Cisty vykon", "Oboje"]:
-            performance_columns.extend(["Cisty vykon vc. uzavrenych pozic v penezich", "Cisty vykon vc. uzavrenych pozic %", "SPY %", "MSCI World ETF %", "Cisty vykon aktualniho portfolia %"])
+            performance_columns.extend([
+                "Cisty vykon vc. uzavrenych pozic v penezich",
+                "Cisty vykon vc. uzavrenych pozic %",
+                "SPY %",
+                "MSCI World ETF %",
+                "Cisty vykon aktualniho portfolia %",
+            ])
 
         st.dataframe(
             performance_rows[performance_columns],
@@ -3283,7 +4394,17 @@ if current_page == t("reports", language):
                         x=clean_history_df["Date"],
                         y=clean_history_df["clean_return_pct"],
                         mode="lines",
-                        name="Cisty vykon",
+                        name="Cisty vykon aktualniho portfolia",
+                        yaxis="y2" if performance_view == "Oboje" else "y",
+                    )
+                )
+            if performance_view in ["Cisty vykon", "Oboje"] and not clean_with_closed_history_df.empty:
+                performance_fig.add_trace(
+                    go.Scatter(
+                        x=smooth_clean_with_closed_history_df["Date"] if not smooth_clean_with_closed_history_df.empty else clean_with_closed_history_df["Date"],
+                        y=smooth_clean_with_closed_history_df["clean_return_pct"] if not smooth_clean_with_closed_history_df.empty else clean_with_closed_history_df["clean_with_closed_pct"],
+                        mode="lines",
+                        name="Cisty vykon vc. uzavrenych pozic",
                         yaxis="y2" if performance_view == "Oboje" else "y",
                     )
                 )
@@ -3304,35 +4425,77 @@ if current_page == t("reports", language):
         else:
             st.info("Historicky vykon portfolia zatim nelze bezpecne spocitat z dostupnych dat.")
 
-        st.caption("Omezeni: cisty vykon je pocitany jednoduse z historie portfolia a dat nakupu v CSV. Nove pozice odfiltruje podle jejich trzni hodnoty v prvni den, kdy vstoupi do historie. Je to bezpecnejsi nez pouzivat nakupni cenu, ale stale nejde o plny institucionalni TWR.")
+        st.caption("Omezeni: cisty vykon je nově stavěný z transakcni historie otevrenych pozic, buy/sell cash flow a dividend. Je výrazne presnejsi nez puvodni verze z portfolio.csv, ale stale nejde o plny account-level TWR, protoze aplikace nevede samostatny cash ucet.")
 
     with report_benchmark_tab:
+        render_section_intro("Benchmark srovnani", "Portfolio proti zvolenemu benchmarku od stejneho startu.")
         st.caption("Srovnani portfolia a benchmarku jako vykon v % od stejneho pocatecniho bodu.")
         benchmark_period_options = ["1 mesic", "3 mesice", "1 rok", "Od nakupu"]
         benchmark_col1, benchmark_col2 = st.columns(2)
         selected_report_period = benchmark_col1.selectbox("Obdobi", benchmark_period_options, key="reports_benchmark_period")
         selected_report_benchmark = benchmark_col2.selectbox("Benchmark", list(BENCHMARKS.keys()), key="reports_benchmark_ticker")
+        report_benchmark_mode = st.radio(
+            "Rezim vykonu",
+            ["Aktualni portfolio", "Vcetne uzavrenych pozic"],
+            horizontal=True,
+            key="reports_benchmark_mode",
+        )
         st.caption(t("history_explainer", language))
 
         benchmark_period = HISTORY_PERIODS.get(selected_report_period, "max")
         if selected_report_period == "Od nakupu":
             benchmark_period = "max"
 
-        report_portfolio_history_df, missing_benchmark_tickers = build_portfolio_history(raw_df, benchmark_period)
+        report_history_source_df = open_lot_transactions_df if report_benchmark_mode == "Aktualni portfolio" else transactions_df
+        report_history_include_tickers = open_transaction_tickers if report_benchmark_mode == "Aktualni portfolio" else None
+        report_portfolio_history_df, missing_benchmark_tickers = build_transaction_portfolio_history(
+            report_history_source_df,
+            transaction_ticker_map,
+            period=benchmark_period,
+            include_tickers=report_history_include_tickers,
+        )
         if missing_benchmark_tickers:
             st.info(f"Nektere tickery nejsou v benchmark porovnani zapocitane: {', '.join(missing_benchmark_tickers)}")
 
         if report_portfolio_history_df.empty:
             st.info(t("missing_portfolio_history", language))
         else:
+            if report_benchmark_mode == "Vcetne uzavrenych pozic":
+                report_clean_history_df = build_account_clean_performance_history(
+                    report_portfolio_history_df,
+                    report_history_source_df,
+                    include_tickers=report_history_include_tickers,
+                )
+            else:
+                report_clean_history_df = build_clean_performance_history_from_transactions(
+                    report_portfolio_history_df,
+                    report_history_source_df,
+                    include_tickers=report_history_include_tickers,
+                )
             report_benchmark_history_df = build_benchmark_history(benchmark_period, BENCHMARKS[selected_report_benchmark])
             if report_benchmark_history_df.empty:
                 st.info(t("missing_benchmark_history", language))
             else:
-                report_comparison_df = report_portfolio_history_df.merge(report_benchmark_history_df, on="Date", how="inner")
-                report_comparison_df["portfolio_return_pct"] = normalize_to_percent(report_comparison_df["portfolio_value"])
+                report_comparison_df = report_clean_history_df.merge(report_benchmark_history_df, on="Date", how="inner")
+                report_comparison_df["portfolio_return_pct_raw"] = pd.to_numeric(
+                    report_comparison_df["clean_return_pct"],
+                    errors="coerce",
+                )
+                portfolio_growth = (report_comparison_df["portfolio_return_pct_raw"] / 100.0) + 1.0
+                portfolio_growth = portfolio_growth.replace([float("inf"), float("-inf")], pd.NA).dropna()
+                if len(portfolio_growth) < 2:
+                    st.info(t("missing_percent_history", language))
+                    report_comparison_df = pd.DataFrame()
+                else:
+                    start_growth = float(portfolio_growth.iloc[0])
+                    if start_growth == 0:
+                        st.info(t("missing_percent_history", language))
+                        report_comparison_df = pd.DataFrame()
+                    else:
+                        report_comparison_df["portfolio_return_pct"] = (((report_comparison_df["portfolio_return_pct_raw"] / 100.0) + 1.0) / start_growth - 1.0) * 100
                 report_comparison_df["benchmark_return_pct"] = normalize_to_percent(report_comparison_df["benchmark_value"])
-                report_comparison_df = report_comparison_df.dropna(subset=["portfolio_return_pct", "benchmark_return_pct"])
+                if not report_comparison_df.empty:
+                    report_comparison_df = report_comparison_df.dropna(subset=["portfolio_return_pct", "benchmark_return_pct"])
 
                 if len(report_comparison_df) < 2:
                     st.info(t("missing_percent_history", language))
@@ -3343,7 +4506,7 @@ if current_page == t("reports", language):
                             x=report_comparison_df["Date"],
                             y=report_comparison_df["portfolio_return_pct"],
                             mode="lines",
-                            name="Portfolio",
+                            name=report_benchmark_mode,
                         )
                     )
                     report_fig.add_trace(
@@ -3366,11 +4529,12 @@ if current_page == t("reports", language):
                     report_diff_pct = report_portfolio_pct - report_benchmark_pct
 
                     benchmark_metric_col1, benchmark_metric_col2, benchmark_metric_col3 = st.columns(3)
-                    benchmark_metric_col1.metric("Portfolio", f"{report_portfolio_pct:.2f} %")
+                    benchmark_metric_col1.metric(report_benchmark_mode, f"{report_portfolio_pct:.2f} %")
                     benchmark_metric_col2.metric(selected_report_benchmark, f"{report_benchmark_pct:.2f} %")
                     benchmark_metric_col3.metric("Rozdil oproti benchmarku", f"{report_diff_pct:.2f} p. b.")
 
     with report_changes_tab:
+        render_section_intro("Zmeny", "Posledni pohyby v portfoliu, planu a investicnich rozhodnutich.")
         st.caption("Posledni dostupne zmeny z CSV souboru. Portfolio nema plnou historii stavu, proto se zobrazuji hlavne posledni nakupy, upravy planu a rozhodnuti.")
         portfolio_changes_df, plan_changes_df, decision_changes_df = get_report_change_tables(
             raw_df, analysis_df, analysis_history_df, date_format_label
@@ -3398,6 +4562,7 @@ if current_page == t("reports", language):
                 st.info("N/A")
 
     with report_risk_tab:
+        render_section_intro("Riziko a koncentrace", "Rozlozeni portfolia, koncentrace a pomocne pohledy na expozici.")
         st.caption("Jednoduchy pohled na rozlozeni portfolia a koncentraci nejvetsich pozic.")
         if len(df) == 0 or total_value == 0:
             st.info("N/A")
@@ -3499,7 +4664,18 @@ if current_page == t("reports", language):
             if float(top_position["weight_pct"]) >= 25:
                 st.warning(f"Pozice {top_position['ticker']} tvori {top_position['weight_pct']:.2f} % portfolia. To uz je vyssi koncentrace.")
 
-if current_page == t("overview", language):
+if current_page == "Portfolio":
+    render_page_header("Portfolio", "Pracovni prostor pro holdings, detail pozice a spravu portfolia.", "Holdings")
+    portfolio_cost_base_for_cards = convert_from_usd(df["cost_usd"].sum(), base_currency) if len(df) > 0 else 0.0
+    portfolio_return_pct = (total_profit_loss / portfolio_cost_base_for_cards * 100) if portfolio_cost_base_for_cards else None
+    render_kpi_cards(
+        [
+            {"label": "Hodnota portfolia", "value": format_currency_metric(total_value, base_currency), "delta": "Aktualni velikost portfolia"},
+            {"label": "Denni zmena", "value": format_currency_metric(df["daily_change_base"].sum() if len(df) > 0 else 0.0, base_currency), "delta": format_percent_metric((df["daily_change_base"].sum() / (total_value - df["daily_change_base"].sum()) * 100) if len(df) > 0 and (total_value - df["daily_change_base"].sum()) else 0.0)},
+            {"label": "Celkovy zisk", "value": format_currency_metric(total_profit_loss, base_currency), "delta": format_percent_metric(portfolio_return_pct)},
+            {"label": "Pocet pozic", "value": str(len(df)), "delta": "Agregovane holdings"},
+        ]
+    )
     portfolio_overview_tab, portfolio_add_tab, portfolio_edit_tab, portfolio_delete_tab = st.tabs(
         [t("overview", language), t("add", language), t("edit", language), t("delete", language)]
     )
@@ -3598,289 +4774,258 @@ if current_page == t("overview", language):
             st.info("Portfolio je prazdne.")
 
     with portfolio_overview_tab:
-        header_left, header_right = st.columns([3.6, 0.9])
-
-        with header_left:
-            st.subheader(t("overview", language))
-
-        with header_right:
-            st.subheader(t("rates", language))
-            try:
-                rates = get_czk_rates()
-                rates_df = pd.DataFrame(
-                    [
-                        {
-                            "Par": pair,
-                            "Kurz": f"{rate_data['value']:.2f} Kc",
-                            "1 Year": rate_data["history"],
-                        }
-                        for pair, rate_data in rates.items()
-                    ]
-                )
-                st.dataframe(
-                    rates_df,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Par": st.column_config.TextColumn(width="small"),
-                        "Kurz": st.column_config.TextColumn(width="small"),
-                        "1 Year": st.column_config.LineChartColumn("1 Year", width="medium"),
-                    },
-                )
-            except Exception:
-                st.info("Kurzy se nepodarilo nacist.")
-
-    df["price_display"] = df.apply(lambda row: format_price_with_currency(row["price"], row["currency"]), axis=1)
-    df["buy_price_display"] = df.apply(
-        lambda row: format_price_with_currency(row["buy_price"], row["currency"] if pd.notna(row["currency"]) else "USD"),
-        axis=1,
-    )
-    df["company_display"] = df["company"].fillna("").replace("", "N/A")
-    df["pe_display"] = df["pe"].apply(format_number)
-    df["eps_display"] = df["eps"].apply(format_number)
-    df["earnings_yield_display"] = df["earnings_yield"].apply(lambda value: format_number(value, " %"))
-    df["beta_display"] = df["beta"].apply(format_number)
-
-    table_df = df[
-        [
-            "ticker",
-            "company_display",
-            "price_display",
-            "daily_change_pct",
-            "daily_change_base",
-            "shares",
-            "buy_price_display",
-            "one_year",
-            "value_base",
-            "profit_loss_base",
-            "profit_loss_pct",
-            "pe_display",
-            "eps_display",
-            "earnings_yield_display",
-            "market_cap_text",
-            "beta_display",
-        ]
-    ].rename(
-        columns={
-            "ticker": "Ticker",
-            "company_display": "Spolecnost",
-            "price_display": "Aktualni hodnota",
-            "daily_change_pct": "Denni pohyb %",
-            "daily_change_base": "Denni pohyb",
-            "shares": "Pocet",
-            "buy_price_display": "Nakupni cena",
-            "one_year": "1 Year",
-            "value_base": "Current Value",
-            "profit_loss_base": "Kapitalovy zisk",
-            "profit_loss_pct": "% Zisk",
-            "pe_display": "PE",
-            "eps_display": "EPS",
-            "earnings_yield_display": "Earnings Yield",
-            "market_cap_text": "Market Cap",
-            "beta_display": "Beta",
-        }
-    )
-
-    total_cost = convert_from_usd(df["cost_usd"].sum(), base_currency)
-    total_daily_change = df["daily_change_base"].sum()
-    previous_total_value = total_value - total_daily_change
-    total_daily_change_pct = (total_daily_change / previous_total_value * 100) if previous_total_value else 0.0
-    summary_row = pd.DataFrame(
-        [
-            {
-                "Ticker": "CELKEM",
-                "Spolecnost": "",
-                "Cena": "",
-                "Denni pohyb %": total_daily_change_pct,
-                "Denni pohyb": total_daily_change,
-                "Pocet": df["shares"].sum(),
-                "Nakupni cena": "",
-                "1 Year": [],
-                "Current Value": total_value,
-                "Kapitalovy zisk": total_profit_loss,
-                "% Zisk": (total_profit_loss / total_cost * 100) if total_cost else 0.0,
-                "PE": None,
-                "EPS": None,
-                "Earnings Yield": None,
-                "Market Cap": "",
-                "Beta": None,
+        render_section_intro("Holdings overview", "Hlavni tabulka zustava dominantni, detail a doplnkove grafy jsou az vedle a pod ni.")
+        table_df = df[
+            [
+                "ticker",
+                "company_display",
+                "price_display",
+                "daily_change_pct",
+                "daily_change_base",
+                "shares",
+                "buy_price_display",
+                "one_year",
+                "value_base",
+                "profit_loss_base",
+                "profit_loss_pct",
+                "pe_display",
+                "eps_display",
+                "earnings_yield_display",
+                "market_cap_text",
+                "beta_display",
+            ]
+        ].rename(
+            columns={
+                "ticker": "Ticker",
+                "company_display": "Spolecnost",
+                "price_display": "Aktualni hodnota",
+                "daily_change_pct": "Denni pohyb %",
+                "daily_change_base": "Denni pohyb",
+                "shares": "Pocet",
+                "buy_price_display": "Nakupni cena",
+                "one_year": "1 Year",
+                "value_base": "Current Value",
+                "profit_loss_base": "Kapitalovy zisk",
+                "profit_loss_pct": "% Zisk",
+                "pe_display": "PE",
+                "eps_display": "EPS",
+                "earnings_yield_display": "Earnings Yield",
+                "market_cap_text": "Market Cap",
+                "beta_display": "Beta",
             }
-        ]
-    )
-
-    table_df = table_df[[column for column in visible_columns if column in table_df.columns]]
-
-    st.dataframe(
-        table_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Spolecnost": st.column_config.TextColumn(),
-            "Aktualni hodnota": st.column_config.TextColumn(help="Aktualni cena jedne akcie v jeji mene."),
-            "Denni pohyb %": st.column_config.NumberColumn(format="%.2f %%", help="O kolik procent se cena zmenila oproti predchozimu dni."),
-            "Denni pohyb": st.column_config.NumberColumn(format="%.2f", help="Celkovy denni zisk nebo ztrata cele pozice v zakladni mene."),
-            "Pocet": st.column_config.NumberColumn(format="%.2f", help="Kolik kusu dane akcie nebo ETF vlastnis."),
-            "Nakupni cena": st.column_config.TextColumn(help="Prumerna cena, za kterou jsi pozici nakoupil."),
-            "1 Year": st.column_config.LineChartColumn("1 Year", help="Jednoduchy vyvoj ceny za posledni rok."),
-            "Current Value": st.column_config.NumberColumn(format=f"{base_currency} %.2f", help="Kolik ma cela tvoje pozice ted priblizne hodnotu v zakladni mene."),
-            "Kapitalovy zisk": st.column_config.NumberColumn(format=f"{base_currency} %.2f", help="Rozdil mezi aktualni hodnotou a nakupni cenou v zakladni mene."),
-            "% Zisk": st.column_config.NumberColumn(format="%.2f %%", help="Kolik procent jsi na pozici v plusu nebo minusu."),
-            "PE": st.column_config.TextColumn(help="P/E rika, kolikrat je cena akcie vyssi nez rocni zisk firmy na akcii."),
-            "EPS": st.column_config.TextColumn(help="EPS je zisk firmy pripadajici na jednu akcii."),
-            "Earnings Yield": st.column_config.TextColumn(help="Obracene P/E. Ukazuje, jak velky zisk firma dela vzhledem k cene akcie."),
-            "Beta": st.column_config.TextColumn(help="Beta ukazuje, jak moc je akcie kolisava oproti celemu trhu."),
-        },
-    )
-
-    st.caption(t("summary", language))
-    summary_display = summary_row[
-        [
-            "Ticker",
-            "Denni pohyb %",
-            "Denni pohyb",
-            "Current Value",
-            "Kapitalovy zisk",
-            "% Zisk",
-        ]
-    ]
-    st.dataframe(
-        summary_display,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-        "Denni pohyb %": st.column_config.NumberColumn(format="%.2f %%"),
-        "Denni pohyb": st.column_config.NumberColumn(format="%.2f"),
-        "Current Value": st.column_config.NumberColumn(format=f"{base_currency} %.2f"),
-            "Kapitalovy zisk": st.column_config.NumberColumn(format=f"{base_currency} %.2f"),
-            "% Zisk": st.column_config.NumberColumn(format="%.2f %%"),
-        },
-    )
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Aktualni hodnota portfolia", f"{base_currency} {total_value:,.2f}")
-    col2.metric("Celkovy zisk / ztrata", f"{base_currency} {total_profit_loss:,.2f}")
-    col3.metric(t("last_updated", language), last_updated)
-
-    valid_positions_df = df.dropna(subset=["profit_loss_pct"]) if len(df) > 0 else pd.DataFrame()
-    if len(valid_positions_df) > 0:
-        best_position = valid_positions_df.loc[valid_positions_df["profit_loss_pct"].idxmax()]
-        worst_position = valid_positions_df.loc[valid_positions_df["profit_loss_pct"].idxmin()]
-
-        best_col, worst_col = st.columns(2)
-        best_col.success(
-            f"{t('best_position', language)}: {best_position['ticker']} ({best_position['profit_loss_pct']:.2f} %)"
         )
-        worst_col.error(
-            f"{t('worst_position', language)}: {worst_position['ticker']} ({worst_position['profit_loss_pct']:.2f} %)"
+        visible_table_columns = [column for column in visible_columns if column in table_df.columns]
+        if not visible_table_columns:
+            visible_table_columns = table_df.columns.tolist()
+
+        st.dataframe(
+            table_df[visible_table_columns],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Aktualni hodnota": st.column_config.TextColumn(help="Aktualni cena jedne akcie v jeji mene."),
+                "Denni pohyb %": st.column_config.NumberColumn(format="%.2f %%"),
+                "Denni pohyb": st.column_config.NumberColumn(format="%.2f"),
+                "Pocet": st.column_config.NumberColumn(format="%.2f"),
+                "Nakupni cena": st.column_config.TextColumn(),
+                "Current Value": st.column_config.NumberColumn(format=f"{base_currency} %.2f"),
+                "Kapitalovy zisk": st.column_config.NumberColumn(format=f"{base_currency} %.2f"),
+                "% Zisk": st.column_config.NumberColumn(format="%.2f %%"),
+                "1 Year": st.column_config.LineChartColumn("1 Year"),
+                "PE": st.column_config.TextColumn(),
+                "EPS": st.column_config.TextColumn(),
+                "Earnings Yield": st.column_config.TextColumn(),
+                "Beta": st.column_config.TextColumn(),
+            },
         )
 
-    st.subheader(t("allocation", language))
-    if len(df) > 0 and total_value != 0:
-        chart_df = df[["ticker", "value_usd", "value_base"]].copy()
-        chart_df["label"] = chart_df["ticker"] + " (" + ((chart_df["value_base"] / total_value) * 100).round(1).astype(str) + "%)"
+        if show_fx_rates:
+            st.divider()
+            render_section_intro("FX kurzy", "Decentni doplnkovy blok pod hlavnim holdings overview.")
+            fx_left_space, fx_main_col, fx_right_space = st.columns([0.2, 1, 0.2])
+            with fx_main_col:
+                if not selected_fx_pairs:
+                    st.info("V nastaveni neni vybran zadny FX kurz.")
+                else:
+                    try:
+                        rates = get_czk_rates(tuple(selected_fx_pairs))
+                        if len(rates) == 0:
+                            st.info("Vybrane kurzy se nepodarilo nacist.")
+                        else:
+                            rates_df = pd.DataFrame(
+                                [
+                                    {
+                                        "Par": pair,
+                                        "Kurz": f"{rate_data['value']:.2f}{(' ' + rate_data['suffix']) if rate_data.get('suffix') else ''}",
+                                        "1 Year": rate_data["history"],
+                                    }
+                                    for pair, rate_data in rates.items()
+                                ]
+                            )
+                            st.dataframe(
+                                rates_df,
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "Par": st.column_config.TextColumn(width="small"),
+                                    "Kurz": st.column_config.TextColumn(width="small"),
+                                    "1 Year": st.column_config.LineChartColumn("1 Year", width="medium"),
+                                },
+                            )
+                    except Exception:
+                        st.info("Kurzy se nepodarilo nacist.")
 
-        fig = px.pie(
-            chart_df,
-            names="label",
-            values="value_usd",
-            hole=0.5,
-        )
-        fig.update_traces(textposition="outside", textinfo="label")
-        fig.update_layout(showlegend=False, margin=dict(l=20, r=20, t=20, b=20))
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Zatim neni co zobrazit v grafu.")
-
-    st.subheader(t("profit_chart", language))
-    if len(df) > 0:
-        profit_chart_df = df.sort_values("profit_loss_usd", ascending=False)
-        profit_chart = px.bar(
-            profit_chart_df,
-            x="ticker",
-            y="profit_loss_base",
-            color="profit_loss_base",
-            color_continuous_scale=["#d9534f", "#f0ad4e", "#5cb85c"],
-            labels={"ticker": "Ticker", "profit_loss_base": f"Zisk / ztrata ({base_currency})"},
-        )
-        profit_chart.update_layout(coloraxis_showscale=False, margin=dict(l=20, r=20, t=20, b=20))
-        st.plotly_chart(profit_chart, use_container_width=True)
-    else:
-        st.info("Zatim neni co zobrazit v grafu zisku a ztraty.")
-
-    st.subheader(t("history", language))
-    history_col, benchmark_col = st.columns([1, 1])
-    with history_col:
-        selected_period_label = st.selectbox(
-            t("period", language),
-            list(HISTORY_PERIODS.keys()),
-            index=0,
-        )
-    with benchmark_col:
-        selected_benchmark_label = st.selectbox(
-            t("benchmark", language),
-            list(BENCHMARKS.keys()),
-            index=0,
-        )
-
-    st.caption(t("history_explainer", language))
-
-    portfolio_history_df, missing_history_tickers = build_portfolio_history(
-        raw_df, HISTORY_PERIODS[selected_period_label]
-    )
-
-    if missing_history_tickers:
-        st.warning(t("missing_tickers_warning", language) + ", ".join(missing_history_tickers))
-
-    if not portfolio_history_df.empty:
-        benchmark_history_df = build_benchmark_history(
-            HISTORY_PERIODS[selected_period_label], BENCHMARKS[selected_benchmark_label]
-        )
-        if benchmark_history_df.empty:
-            st.info(t("missing_benchmark_history", language))
-        else:
-            comparison_df = portfolio_history_df.merge(benchmark_history_df, on="Date", how="inner")
-
-            if len(comparison_df) < 2:
-                st.info(t("missing_shared_history", language))
+        lower_left_col, lower_right_col = st.columns([1.05, 1])
+        with lower_left_col:
+            render_section_intro("Alokace", "Rozlozeni portfolia podle velikosti jednotlivych pozic.")
+            if len(df) > 0 and total_value != 0:
+                chart_df = df[["ticker", "value_usd", "value_base"]].copy()
+                chart_df["label"] = chart_df["ticker"] + " (" + ((chart_df["value_base"] / total_value) * 100).round(1).astype(str) + "%)"
+                fig = px.pie(chart_df, names="label", values="value_usd", hole=0.5)
+                fig.update_traces(textposition="outside", textinfo="label")
+                fig.update_layout(showlegend=False, margin=dict(l=20, r=20, t=20, b=20))
+                st.plotly_chart(fig, use_container_width=True)
             else:
-                comparison_df["portfolio_return_pct"] = normalize_to_percent(comparison_df["portfolio_value"])
-                comparison_df["benchmark_return_pct"] = normalize_to_percent(comparison_df["benchmark_value"])
-                comparison_df = comparison_df.dropna(subset=["portfolio_return_pct", "benchmark_return_pct"])
+                st.info("Zatim neni co zobrazit v grafu.")
+
+        with lower_right_col:
+            render_section_intro("Profit leaderboard", "Sekundarni pohled na ziskove a ztratove tituly.")
+            if len(df) > 0:
+                profit_chart_df = df.sort_values("profit_loss_usd", ascending=False)
+                profit_chart = px.bar(
+                    profit_chart_df,
+                    x="ticker",
+                    y="profit_loss_base",
+                    color="profit_loss_base",
+                    color_continuous_scale=["#d9534f", "#f0ad4e", "#5cb85c"],
+                    labels={"ticker": "Ticker", "profit_loss_base": f"Zisk / ztrata ({base_currency})"},
+                )
+                profit_chart.update_layout(coloraxis_showscale=False, margin=dict(l=20, r=20, t=20, b=20))
+                st.plotly_chart(profit_chart, use_container_width=True)
+            else:
+                st.info("Zatim neni co zobrazit v grafu zisku a ztraty.")
+
+        render_section_intro("Historie a benchmark", "Spodni analyticky blok pro vykonnost proti zvolenemu benchmarku.")
+        history_col, benchmark_col = st.columns([1, 1])
+        with history_col:
+            selected_period_label = st.selectbox(
+                t("period", language),
+                list(HISTORY_PERIODS.keys()),
+                index=0,
+            )
+        with benchmark_col:
+            selected_benchmark_label = st.selectbox(
+                t("benchmark", language),
+                list(BENCHMARKS.keys()),
+                index=0,
+            )
+        portfolio_history_mode = st.radio(
+            "Rezim vykonu",
+            ["Aktualni portfolio", "Vcetne uzavrenych pozic"],
+            horizontal=True,
+            key="portfolio_history_mode",
+        )
+
+        st.caption(t("history_explainer", language))
+
+        benchmark_period = HISTORY_PERIODS.get(selected_period_label, "max")
+        if selected_period_label == "Od nakupu":
+            benchmark_period = "max"
+
+        history_source_df = open_lot_transactions_df if portfolio_history_mode == "Aktualni portfolio" else transactions_df
+        history_include_tickers = open_transaction_tickers if portfolio_history_mode == "Aktualni portfolio" else None
+        portfolio_history_df, missing_history_tickers = build_transaction_portfolio_history(
+            history_source_df,
+            transaction_ticker_map,
+            benchmark_period,
+            include_tickers=history_include_tickers,
+        )
+
+        if missing_history_tickers:
+            st.warning(t("missing_tickers_warning", language) + ", ".join(missing_history_tickers))
+
+        if not portfolio_history_df.empty:
+            if portfolio_history_mode == "Vcetne uzavrenych pozic":
+                portfolio_clean_history_df = build_account_clean_performance_history(
+                    portfolio_history_df,
+                    history_source_df,
+                    include_tickers=history_include_tickers,
+                )
+            else:
+                portfolio_clean_history_df = build_clean_performance_history_from_transactions(
+                    portfolio_history_df,
+                    history_source_df,
+                    include_tickers=history_include_tickers,
+                )
+            benchmark_history_df = build_benchmark_history(
+                benchmark_period, BENCHMARKS[selected_benchmark_label]
+            )
+            if benchmark_history_df.empty:
+                st.info(t("missing_benchmark_history", language))
+            else:
+                comparison_df = portfolio_clean_history_df.merge(benchmark_history_df, on="Date", how="inner")
 
                 if len(comparison_df) < 2:
-                    st.info(t("missing_percent_history", language))
+                    st.info(t("missing_shared_history", language))
                 else:
-                    chart_fig = go.Figure()
-                    chart_fig.add_trace(
-                        go.Scatter(
-                            x=comparison_df["Date"],
-                            y=comparison_df["portfolio_return_pct"],
-                            mode="lines",
-                            name="Portfolio",
-                        )
+                    comparison_df = comparison_df.dropna(subset=["clean_return_pct"])
+                    comparison_df["portfolio_return_pct_raw"] = pd.to_numeric(
+                        comparison_df["clean_return_pct"],
+                        errors="coerce",
                     )
-                    chart_fig.add_trace(
-                        go.Scatter(
-                            x=comparison_df["Date"],
-                            y=comparison_df["benchmark_return_pct"],
-                            mode="lines",
-                            name=selected_benchmark_label,
-                        )
-                    )
-                    chart_fig.update_layout(
-                        margin=dict(l=20, r=20, t=20, b=20),
-                        xaxis_title="Datum",
-                        yaxis_title="Vykonnost (%)",
-                    )
-                    st.plotly_chart(chart_fig, use_container_width=True)
+                    portfolio_growth = (comparison_df["portfolio_return_pct_raw"] / 100.0) + 1.0
+                    portfolio_growth = portfolio_growth.replace([float("inf"), float("-inf")], pd.NA).dropna()
+                    if len(portfolio_growth) < 2:
+                        st.info(t("missing_percent_history", language))
+                        comparison_df = pd.DataFrame()
+                    else:
+                        start_growth = float(portfolio_growth.iloc[0])
+                        if start_growth == 0:
+                            st.info(t("missing_percent_history", language))
+                            comparison_df = pd.DataFrame()
+                        else:
+                            comparison_df["portfolio_return_pct"] = (((comparison_df["portfolio_return_pct_raw"] / 100.0) + 1.0) / start_growth - 1.0) * 100
+                    comparison_df["benchmark_return_pct"] = normalize_to_percent(comparison_df["benchmark_value"])
+                    if not comparison_df.empty:
+                        comparison_df = comparison_df.dropna(subset=["portfolio_return_pct", "benchmark_return_pct"])
 
-                    portfolio_return_pct = float(comparison_df["portfolio_return_pct"].iloc[-1])
-                    benchmark_return_pct = float(comparison_df["benchmark_return_pct"].iloc[-1])
-                    excess_return_pct_points = portfolio_return_pct - benchmark_return_pct
+                    if len(comparison_df) < 2:
+                        st.info(t("missing_percent_history", language))
+                    else:
+                        chart_fig = go.Figure()
+                        chart_fig.add_trace(
+                            go.Scatter(
+                                x=comparison_df["Date"],
+                                y=comparison_df["portfolio_return_pct"],
+                                mode="lines",
+                                name=portfolio_history_mode,
+                            )
+                        )
+                        chart_fig.add_trace(
+                            go.Scatter(
+                                x=comparison_df["Date"],
+                                y=comparison_df["benchmark_return_pct"],
+                                mode="lines",
+                                name=selected_benchmark_label,
+                            )
+                        )
+                        chart_fig.update_layout(
+                            margin=dict(l=20, r=20, t=20, b=20),
+                            xaxis_title="Datum",
+                            yaxis_title="Vykonnost (%)",
+                        )
+                        st.plotly_chart(chart_fig, use_container_width=True)
 
-                    perf_col1, perf_col2, perf_col3 = st.columns(3)
-                    perf_col1.metric(t("portfolio_return", language), f"{portfolio_return_pct:.2f} %")
-                    perf_col2.metric(t("benchmark_return", language), f"{benchmark_return_pct:.2f} %")
-                    perf_col3.metric(t("excess_return", language), f"{excess_return_pct_points:.2f} p. b.")
-    else:
-        st.info(t("missing_portfolio_history", language))
+                        portfolio_return_pct = float(comparison_df["portfolio_return_pct"].iloc[-1])
+                        benchmark_return_pct = float(comparison_df["benchmark_return_pct"].iloc[-1])
+                        excess_return_pct_points = portfolio_return_pct - benchmark_return_pct
+
+                        render_kpi_cards(
+                            [
+                                {"label": t("portfolio_return", language), "value": format_percent_metric(portfolio_return_pct), "delta": portfolio_history_mode},
+                                {"label": t("benchmark_return", language), "value": format_percent_metric(benchmark_return_pct), "delta": selected_benchmark_label},
+                                {"label": t("excess_return", language), "value": f"{excess_return_pct_points:.2f} p. b.", "delta": "Rozdil oproti benchmarku"},
+                            ]
+                        )
+        else:
+            st.info(t("missing_portfolio_history", language))
