@@ -1,10 +1,12 @@
 import pandas as pd
+from io import BytesIO
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
+from zoneinfo import ZoneInfo
 
 st.set_page_config(page_title="Portfolio Tracker", layout="wide")
 
@@ -15,6 +17,7 @@ ANALYSIS_HISTORY_PATH = "data/analysis_history.csv"
 LONG_TERM_PLANS_PATH = "data/long_term_plans.csv"
 LONG_TERM_CHECKS_PATH = "data/long_term_checks.csv"
 TRANSACTIONS_PATH = "data/transactions.csv"
+EARNINGS_PATH = "data/earnings_calendar.csv"
 SETTINGS_PATH = "settings.json"
 HISTORY_PERIODS = {"1 mesic": "1mo", "3 mesice": "3mo", "1 rok": "1y"}
 BENCHMARKS = {"SPY": "SPY", "MSCI World ETF": "URTH", "Nasdaq 100": "QQQ"}
@@ -75,6 +78,7 @@ TEXTS = {
         "long_term_plan": "Dlouhodoby plan",
         "reports": "Reporty",
         "transactions": "Transakce",
+        "earnings": "Vysledky",
         "analysis_overview": "Detail akcie a plan",
         "analysis_update": "Upravit plan",
         "analysis_decision": "Nove rozhodnuti",
@@ -121,6 +125,7 @@ TEXTS = {
         "long_term_plan": "Long-Term Plan",
         "reports": "Reports",
         "transactions": "Transactions",
+        "earnings": "Earnings",
         "analysis_overview": "Stock detail and plan",
         "analysis_update": "Update plan",
         "analysis_decision": "New decision",
@@ -158,6 +163,104 @@ TEXTS = {
         "missing_tickers_warning": "Some tickers have missing history and were excluded from the chart: ",
     },
 }
+
+TABLE_COLUMN_HELP = {
+    "Ticker": "Burzovni zkratka akcie, ETF nebo menoveho paru.",
+    "Spolecnost": "Nazev firmy nebo fondu.",
+    "Status": "Aktualni stav pozice, planu nebo kandidata ve watchlistu.",
+    "Aktualni cena": "Posledni dostupna trzni cena jednoho kusu.",
+    "Aktualni hodnota": "Posledni dostupna trzni cena jednoho kusu.",
+    "Premarket cena": "Informacni cena pred otevrenim americkeho trhu. Nezapocitava se do vypoctu portfolia.",
+    "Premarket zmena %": "Procentni zmena v US premarketu oproti poslednimu oficialnimu close. Jen informacni sloupec.",
+    "Denni pohyb %": "Zmena oproti poslednimu oficialnimu close pro dany trh.",
+    "Denni pohyb": "Penezni dopad posledni denni zmeny do tve zakladni meny.",
+    "Pocet": "Pocet drzenych kusu akcie nebo ETF.",
+    "Pocet kusu": "Pocet drzenych nebo uzavrenych kusu v danem obchodu.",
+    "Nakupni cena": "Cena, za kterou byla pozice nakoupena.",
+    "Prumerna nakupni cena": "Prumerna cena, za kterou je pozice nakoupena.",
+    "Prumerna prodejni cena": "Prumerna cena, za kterou byla pozice prodana.",
+    "Current Value": "Aktualni hodnota cele pozice v nastavene mene portfolia.",
+    "Kapitalovy zisk": "Nerealizovany nebo souhrnny zisk po odecteni nakupni ceny.",
+    "Nerealizovany zisk / ztrata": "Zisk nebo ztrata otevrene pozice, ktera jeste nebyla prodana.",
+    "Nerealizovany zisk / ztrata %": "Procentni nerealizovany zisk nebo ztrata otevrene pozice.",
+    "Realizovany zisk / ztrata": "Zisk nebo ztrata z uzavrene pozice po prodeji.",
+    "Realizovany zisk / ztrata %": "Procentni zisk nebo ztrata z uzavrene pozice.",
+    "% Zisk": "Procentni zhodnoceni pozice oproti nakupni cene.",
+    "PE": "Price to Earnings. Kolikrat trh plati rocni zisk firmy v cene akcie.",
+    "EPS": "Earnings per Share. Zisk firmy pripadajici na jednu akcii.",
+    "Earnings Yield": "Obracena hodnota PE. Priblizny ziskovy vynos firmy vuci cene akcie.",
+    "Market Cap": "Trzni kapitalizace, tedy celkova hodnota firmy na burze.",
+    "Beta": "Citlivost akcie vuci pohybu trhu. Nad 1 = obvykle vyssi kolisavost nez trh.",
+    "1 Year": "Zjednoduseny pohled na vyvoj ceny za posledni rok.",
+    "Buy zone": "Cenove pasmo, ve kterem dává smysl uvazovat o nakupu.",
+    "Plan nakupu": "Cena nebo uroven, kde chces nakup realizovat.",
+    "Plan prodeje": "Cena nebo podminka, kde chces pozici castecne nebo uplne prodavat.",
+    "Vzdalenost od buy zony": "O kolik procent je aktualni cena nad nebo pod buy zonou.",
+    "Upside %": "Procentni rozdil mezi aktualni cenou a cilovou cenou.",
+    "Conviction": "Jak silne veris investicni tezi pro danou pozici.",
+    "Dalsi akce": "Nejblizsi konkretni krok, ktery planujes u dane pozice udelat.",
+    "Posledni revize": "Kdy byl plan nebo analyza naposledy upraven.",
+    "Cilova cena": "Cena, na kterou cilis podle investicniho planu.",
+    "Invalidation level": "Uroven, kde by investicni teze prestala davat smysl a plan by se mel prehodnotit.",
+    "Datum": "Datum udalosti, obchodu nebo zaznamu.",
+    "Datum nakupu": "Den, kdy byl lot nebo pozice nakoupen.",
+    "Datum prodeje": "Den, kdy byl lot nebo pozice prodan.",
+    "Typ": "Typ zaznamu nebo rozhodnuti.",
+    "Cena": "Cena na jeden kus nebo cena zaznamenana v danem rozhodnuti.",
+    "Plan": "Strucny plan nebo zamysleny dalsi krok.",
+    "Komentar": "Volna poznamka k rozhodnuti nebo obchodu.",
+    "Mena": "Mena, ve ktere je aktivum nebo obchod veden.",
+    "Broker": "Broker nebo platforma, pres kterou byl obchod proveden.",
+    "Poznamka": "Doplnujici vlastni komentar.",
+    "Rok realizace": "Kalendářní rok, ve kterem doslo k prodeji nebo realizaci vysledku.",
+    "Prodejni obrat": "Celkovy objem prodanych cennych papiru za dane obdobi.",
+    "Realizovany vysledek mimo 3lety test": "Zisk nebo ztrata z obchodu, ktery nesplnil casovy test.",
+    "Poplatky mimo 3lety test": "Poplatky vztahujici se k obchodum mimo casovy test.",
+    "Realizovane zisky": "Souhrn vsech ziskovych uzavrenych obchodu za dane obdobi.",
+    "Realizovane ztraty": "Souhrn vsech ztratovych uzavrenych obchodu za dane obdobi.",
+    "Realizovany vysledek": "Souhrnny realizovany vysledek po secteni zisku a ztrat.",
+    "Poplatky": "Souhrn poplatku spojenych s obchody v danem prehledu.",
+    "3lety test": "Informace, zda obchod splnil orientacni tri lety casovy test pro osvobozeni.",
+    "Datum vysledku": "Planovane nebo skutecne datum zverejneni firemnich vysledku.",
+    "Cas": "Kdy firma zverejnuje vysledky: pred open, po close nebo behem trhu.",
+    "EPS odhad": "Ocekavany zisk na akcii podle analytiku pred vysledky.",
+    "Revenue odhad": "Ocekavane trzby firmy podle analytiku pred vysledky.",
+    "EPS realita": "Skutecne reportovany zisk na akcii po vysledcich.",
+    "Revenue realita": "Skutecne reportovane trzby po vysledcich.",
+    "EPS surprise": "Rozdil mezi odhadem analytiku a skutecnym EPS.",
+    "Zdroj": "Udava, zda jsou data automaticka nebo rucne upravena.",
+    "Instrument": "Srovnavany instrument nebo benchmark.",
+    "Denni zmena %": "Procentni zmena za posledni obchodni den oproti predchozimu close.",
+    "Rozdil vs portfolio": "Rozdil vykonu benchmarku oproti portfoliu v procentnich bodech.",
+    "Hodnota": "Hodnota dane casti portfolia v nastavene mene.",
+    "Podil %": "Jak velkou cast portfolia dany radek tvori.",
+    "Region": "Zjednodusene geograficke zarazeni expozice.",
+    "Velikost spolecnosti": "Zjednodusene rozdeleni podle velikosti trzni kapitalizace.",
+    "Par": "Menovy par nebo sledovany FX kurz.",
+    "Kurz": "Posledni dostupny kurz pro dany menovy par.",
+    "Obdobi": "Sledovane casove obdobi vykonu nebo planu.",
+    "Cisty vykon vc. uzavrenych pozic v penezich": "Cisty vykon portfolia v penezich vcetne uzavrenych obchodu.",
+    "Cisty vykon vc. uzavrenych pozic %": "Cisty procentni vykon portfolia vcetne uzavrenych obchodu.",
+    "SPY %": "Vykon benchmarku SPY za stejne obdobi.",
+    "MSCI World ETF %": "Vykon benchmarku MSCI World ETF za stejne obdobi.",
+    "Cisty vykon aktualniho portfolia %": "Vykon pouze aktualne drzenych pozic bez vlivu uzavrenych obchodu.",
+}
+
+
+def build_table_column_config(dataframe_or_columns, overrides: dict | None = None) -> dict:
+    if isinstance(dataframe_or_columns, pd.DataFrame):
+        columns = list(dataframe_or_columns.columns)
+    else:
+        columns = list(dataframe_or_columns)
+
+    column_config = dict(overrides or {})
+    for column in columns:
+        if column in column_config:
+            continue
+        help_text = TABLE_COLUMN_HELP.get(column)
+        if help_text:
+            column_config[column] = st.column_config.TextColumn(help=help_text)
+    return column_config
 
 
 def load_portfolio() -> pd.DataFrame:
@@ -471,6 +574,381 @@ def load_long_term_checks() -> pd.DataFrame:
     return df
 
 
+def load_earnings_calendar() -> pd.DataFrame:
+    # Nacte earnings kalendar s auto i manual poli.
+    try:
+        df = pd.read_csv(EARNINGS_PATH)
+    except (FileNotFoundError, pd.errors.EmptyDataError):
+        return pd.DataFrame(
+            columns=[
+                "ticker",
+                "company",
+                "yfinance_ticker",
+                "earnings_date",
+                "earnings_time",
+                "eps_estimate",
+                "revenue_estimate",
+                "eps_actual",
+                "revenue_actual",
+                "eps_surprise_pct",
+                "revenue_surprise_pct",
+                "status",
+                "source",
+                "is_manual_override",
+                "note",
+                "updated_at",
+            ]
+        )
+
+    required_columns = [
+        "ticker",
+        "company",
+        "yfinance_ticker",
+        "earnings_date",
+        "earnings_time",
+        "eps_estimate",
+        "revenue_estimate",
+        "eps_actual",
+        "revenue_actual",
+        "eps_surprise_pct",
+        "revenue_surprise_pct",
+        "status",
+        "source",
+        "is_manual_override",
+        "note",
+        "updated_at",
+    ]
+    for column in required_columns:
+        if column not in df.columns:
+            df[column] = ""
+
+    if len(df) > 0:
+        df["ticker"] = df["ticker"].astype(str).str.upper().str.strip()
+        df["yfinance_ticker"] = df["yfinance_ticker"].fillna(df["ticker"]).replace("", pd.NA).fillna(df["ticker"])
+        for numeric_column in [
+            "eps_estimate",
+            "revenue_estimate",
+            "eps_actual",
+            "revenue_actual",
+            "eps_surprise_pct",
+            "revenue_surprise_pct",
+        ]:
+            df[numeric_column] = pd.to_numeric(df[numeric_column], errors="coerce")
+        df["source"] = df["source"].fillna("").replace("", "manual")
+        df["is_manual_override"] = (
+            df["is_manual_override"]
+            .astype(str)
+            .str.lower()
+            .map({"true": True, "false": False})
+            .fillna(False)
+        )
+        for text_column in ["company", "earnings_time", "status", "note", "updated_at"]:
+            df[text_column] = df[text_column].fillna("").replace("nan", "")
+    return df
+
+
+def save_earnings_calendar(df: pd.DataFrame) -> None:
+    # Ulozi earnings kalendar do CSV.
+    columns_to_save = [
+        "ticker",
+        "company",
+        "yfinance_ticker",
+        "earnings_date",
+        "earnings_time",
+        "eps_estimate",
+        "revenue_estimate",
+        "eps_actual",
+        "revenue_actual",
+        "eps_surprise_pct",
+        "revenue_surprise_pct",
+        "status",
+        "source",
+        "is_manual_override",
+        "note",
+        "updated_at",
+    ]
+    df[columns_to_save].to_csv(EARNINGS_PATH, index=False)
+
+
+def clean_text_value(value) -> str:
+    if pd.isna(value):
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() == "nan" else text
+
+
+def format_large_number(value: float | None, currency: str = "USD") -> str:
+    if value is None or pd.isna(value):
+        return "N/A"
+    absolute_value = abs(float(value))
+    if absolute_value >= 1_000_000_000:
+        return f"{currency} {value / 1_000_000_000:.2f}B"
+    if absolute_value >= 1_000_000:
+        return f"{currency} {value / 1_000_000:.2f}M"
+    if absolute_value >= 1_000:
+        return f"{currency} {value / 1_000:.2f}K"
+    return f"{currency} {value:.2f}"
+
+
+def format_earnings_date_value(value, date_format_label: str) -> str:
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return "N/A"
+    return format_date_display(str(parsed.date()), date_format_label)
+
+
+def normalize_earnings_time_label(value) -> str:
+    text = clean_text_value(value).lower()
+    mapping = {
+        "amc": "After close",
+        "after market close": "After close",
+        "after close": "After close",
+        "bmo": "Before open",
+        "before market open": "Before open",
+        "before open": "Before open",
+        "dmh": "During market",
+        "during market": "During market",
+        "tbd": "TBD",
+    }
+    return mapping.get(text, clean_text_value(value) if clean_text_value(value) else "TBD")
+
+
+def infer_earnings_status(row: pd.Series) -> str:
+    earnings_date = pd.to_datetime(row.get("earnings_date", ""), errors="coerce")
+    eps_actual = safe_float(row.get("eps_actual"))
+    revenue_actual = safe_float(row.get("revenue_actual"))
+    if eps_actual is not None or revenue_actual is not None:
+        return "Vyhlaseno"
+    if pd.isna(earnings_date):
+        return "Bez dat"
+    today = pd.Timestamp(datetime.now().date())
+    if earnings_date.normalize() < today:
+        return "Ceka se na realitu"
+    if earnings_date.normalize() == today:
+        return "Dnes"
+    return "Ceka se"
+
+
+def build_earnings_universe(raw_df: pd.DataFrame, watchlist_df: pd.DataFrame, analysis_df: pd.DataFrame) -> pd.DataFrame:
+    # Posklada unikatni seznam tickeru z portfolia, watchlistu a analyzy.
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for frame in [raw_df, watchlist_df, analysis_df]:
+        if len(frame) == 0 or "ticker" not in frame.columns:
+            continue
+        for row in frame.itertuples(index=False):
+            ticker = clean_text_value(getattr(row, "ticker", "")).upper()
+            if not ticker or ticker in seen:
+                continue
+            company = clean_text_value(getattr(row, "company", ""))
+            yfinance_ticker = clean_text_value(getattr(row, "yfinance_ticker", "")) or ticker
+            rows.append(
+                {
+                    "ticker": ticker,
+                    "company": company,
+                    "yfinance_ticker": yfinance_ticker,
+                }
+            )
+            seen.add(ticker)
+    return pd.DataFrame(rows)
+
+
+def classify_earnings_membership(ticker: str, portfolio_tickers: set[str], watchlist_tickers: set[str]) -> str:
+    ticker_text = clean_text_value(ticker).upper()
+    in_portfolio = ticker_text in portfolio_tickers
+    in_watchlist = ticker_text in watchlist_tickers
+    if in_portfolio and in_watchlist:
+        return "Portfolio + watchlist"
+    if in_portfolio:
+        return "Portfolio"
+    if in_watchlist:
+        return "Watchlist"
+    return "Mimo seznam"
+
+
+def extract_calendar_value(calendar_data, label: str):
+    if calendar_data is None:
+        return None
+    if isinstance(calendar_data, dict):
+        return calendar_data.get(label)
+    if isinstance(calendar_data, pd.DataFrame):
+        if label in calendar_data.index:
+            selected = calendar_data.loc[label]
+            if isinstance(selected, pd.Series) and len(selected) > 0:
+                return selected.iloc[0]
+            return selected
+        if label in calendar_data.columns and len(calendar_data[label]) > 0:
+            return calendar_data[label].iloc[0]
+    if isinstance(calendar_data, pd.Series):
+        return calendar_data.get(label)
+    return None
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def fetch_earnings_snapshot(yfinance_ticker: str) -> dict:
+    # Nacte nejblizsi earnings datum a dostupne odhady/skutecnost z Yahoo Finance.
+    result = {
+        "earnings_date": "",
+        "earnings_time": "",
+        "eps_estimate": None,
+        "revenue_estimate": None,
+        "eps_actual": None,
+        "revenue_actual": None,
+        "eps_surprise_pct": None,
+        "revenue_surprise_pct": None,
+        "source": "auto",
+    }
+    ticker_text = clean_text_value(yfinance_ticker)
+    if not ticker_text:
+        return result
+
+    try:
+        ticker = yf.Ticker(ticker_text)
+    except Exception:
+        return result
+
+    try:
+        calendar_data = ticker.calendar
+    except Exception:
+        calendar_data = None
+
+    earnings_date_value = extract_calendar_value(calendar_data, "Earnings Date")
+    if isinstance(earnings_date_value, (list, tuple)) and earnings_date_value:
+        earnings_date_value = earnings_date_value[0]
+    parsed_earnings_date = pd.to_datetime(earnings_date_value, errors="coerce")
+    if pd.notna(parsed_earnings_date):
+        result["earnings_date"] = str(parsed_earnings_date.date())
+
+    result["eps_estimate"] = safe_float(extract_calendar_value(calendar_data, "EPS Estimate"))
+    result["revenue_estimate"] = safe_float(extract_calendar_value(calendar_data, "Revenue Estimate"))
+
+    try:
+        earnings_dates_df = ticker.get_earnings_dates(limit=8)
+    except Exception:
+        earnings_dates_df = pd.DataFrame()
+
+    if isinstance(earnings_dates_df, pd.DataFrame) and len(earnings_dates_df) > 0:
+        earnings_dates_df = earnings_dates_df.copy().reset_index()
+        date_column = earnings_dates_df.columns[0]
+        earnings_dates_df["event_date"] = pd.to_datetime(earnings_dates_df[date_column], errors="coerce")
+        earnings_dates_df = earnings_dates_df.dropna(subset=["event_date"])
+        if len(earnings_dates_df) > 0:
+            today = pd.Timestamp(datetime.now().date())
+            future_rows = earnings_dates_df[earnings_dates_df["event_date"] >= (today - timedelta(days=2))]
+            if not future_rows.empty:
+                nearest_row = future_rows.sort_values("event_date").iloc[0]
+                if not result["earnings_date"]:
+                    result["earnings_date"] = str(nearest_row["event_date"].date())
+                if result["eps_estimate"] is None and "EPS Estimate" in future_rows.columns:
+                    result["eps_estimate"] = safe_float(nearest_row.get("EPS Estimate"))
+
+            if "Reported EPS" in earnings_dates_df.columns:
+                realized_rows = earnings_dates_df[earnings_dates_df["Reported EPS"].notna()].copy()
+            else:
+                realized_rows = pd.DataFrame()
+            if len(realized_rows) > 0:
+                latest_realized = realized_rows.sort_values("event_date", ascending=False).iloc[0]
+                result["eps_actual"] = safe_float(latest_realized.get("Reported EPS"))
+                if "EPS Estimate" in realized_rows.columns and result["eps_estimate"] is None:
+                    result["eps_estimate"] = safe_float(latest_realized.get("EPS Estimate"))
+                if "Surprise(%)" in realized_rows.columns:
+                    result["eps_surprise_pct"] = safe_float(latest_realized.get("Surprise(%)"))
+
+    try:
+        info = ticker.info
+    except Exception:
+        info = {}
+
+    earnings_timestamp = info.get("earningsTimestamp") or info.get("earningsTimestampStart")
+    if earnings_timestamp and not result["earnings_date"]:
+        parsed_timestamp = pd.to_datetime(earnings_timestamp, unit="s", errors="coerce")
+        if pd.notna(parsed_timestamp):
+            result["earnings_date"] = str(parsed_timestamp.date())
+
+    result["earnings_time"] = normalize_earnings_time_label(info.get("earningsCallTime") or info.get("earningsCallTimeShort"))
+    if result["revenue_estimate"] is None:
+        result["revenue_estimate"] = safe_float(info.get("revenueEstimate"))
+    return result
+
+
+def merge_auto_earnings_data(
+    earnings_df: pd.DataFrame,
+    universe_df: pd.DataFrame,
+    force_manual_override: bool = False,
+) -> tuple[pd.DataFrame, list[str]]:
+    # Doplni nebo obnovi earnings data z online zdroje.
+    working_df = earnings_df.copy()
+    refreshed_tickers: list[str] = []
+    timestamp_now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    for row in universe_df.itertuples(index=False):
+        ticker = clean_text_value(row.ticker).upper()
+        if not ticker:
+            continue
+        company = clean_text_value(row.company)
+        yfinance_ticker = clean_text_value(row.yfinance_ticker) or ticker
+        existing_index = working_df.index[working_df["ticker"] == ticker].tolist()
+        existing_row = working_df.loc[existing_index[0]] if existing_index else pd.Series(dtype=object)
+        is_manual_override = bool(existing_row.get("is_manual_override", False)) if not existing_row.empty else False
+        if is_manual_override and not force_manual_override:
+            if existing_index:
+                if not clean_text_value(existing_row.get("company", "")) and company:
+                    working_df.loc[existing_index[0], "company"] = company
+                if not clean_text_value(existing_row.get("yfinance_ticker", "")) and yfinance_ticker:
+                    working_df.loc[existing_index[0], "yfinance_ticker"] = yfinance_ticker
+            else:
+                new_row = {
+                    "ticker": ticker,
+                    "company": company,
+                    "yfinance_ticker": yfinance_ticker,
+                    "earnings_date": "",
+                    "earnings_time": "TBD",
+                    "eps_estimate": None,
+                    "revenue_estimate": None,
+                    "eps_actual": None,
+                    "revenue_actual": None,
+                    "eps_surprise_pct": None,
+                    "revenue_surprise_pct": None,
+                    "status": "Bez dat",
+                    "source": "manual",
+                    "is_manual_override": True,
+                    "note": "",
+                    "updated_at": timestamp_now,
+                }
+                working_df = pd.concat([working_df, pd.DataFrame([new_row])], ignore_index=True)
+            continue
+
+        snapshot = fetch_earnings_snapshot(yfinance_ticker)
+        row_data = {
+            "ticker": ticker,
+            "company": company or clean_text_value(existing_row.get("company", "")),
+            "yfinance_ticker": yfinance_ticker,
+            "earnings_date": clean_text_value(snapshot.get("earnings_date", "")),
+            "earnings_time": clean_text_value(snapshot.get("earnings_time", "")) or "TBD",
+            "eps_estimate": snapshot.get("eps_estimate"),
+            "revenue_estimate": snapshot.get("revenue_estimate"),
+            "eps_actual": snapshot.get("eps_actual"),
+            "revenue_actual": snapshot.get("revenue_actual"),
+            "eps_surprise_pct": snapshot.get("eps_surprise_pct"),
+            "revenue_surprise_pct": snapshot.get("revenue_surprise_pct"),
+            "source": "auto",
+            "is_manual_override": False,
+            "note": clean_text_value(existing_row.get("note", "")),
+            "updated_at": timestamp_now,
+        }
+        row_data["status"] = infer_earnings_status(pd.Series(row_data))
+
+        if existing_index:
+            working_df.loc[existing_index[0], list(row_data.keys())] = list(row_data.values())
+        else:
+            working_df = pd.concat([working_df, pd.DataFrame([row_data])], ignore_index=True)
+        refreshed_tickers.append(ticker)
+
+    if len(working_df) > 0:
+        working_df["status"] = working_df.apply(infer_earnings_status, axis=1)
+    return working_df, refreshed_tickers
+
+
 def load_settings() -> dict:
     # Nacte nastaveni z JSON souboru, nebo vrati vychozi hodnoty.
     try:
@@ -566,16 +1044,165 @@ def render_section_intro(title: str, subtitle: str = "") -> None:
     )
 
 
-def format_currency_metric(value: float | None, currency: str) -> str:
+def format_currency_metric(
+    value: float | None,
+    currency: str,
+    decimals: int = 2,
+    thousands_sep: str = ",",
+    decimal_sep: str = ".",
+) -> str:
     if value is None or pd.isna(value):
         return "N/A"
-    return f"{currency} {value:,.2f}"
+    formatted = f"{value:,.{decimals}f}"
+    if thousands_sep != "," or decimal_sep != ".":
+        formatted = formatted.replace(",", "__THOUSANDS__").replace(".", "__DECIMAL__")
+        formatted = formatted.replace("__THOUSANDS__", thousands_sep).replace("__DECIMAL__", decimal_sep)
+    return f"{currency} {formatted}"
+
+
+def prepare_export_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    export_df = df.copy()
+    export_df = export_df.fillna("")
+    for column in export_df.columns:
+        export_df[column] = export_df[column].apply(lambda value: value.strftime("%d.%m.%Y") if isinstance(value, (pd.Timestamp, datetime)) else value)
+    return export_df
+
+
+def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Export") -> bytes:
+    try:
+        import xlsxwriter  # noqa: F401
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Pro export do Excelu je potreba nainstalovat xlsxwriter.") from exc
+
+    export_df = prepare_export_dataframe(df)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        export_df.to_excel(writer, index=False, sheet_name=sheet_name)
+        workbook = writer.book
+        worksheet = writer.sheets[sheet_name]
+
+        header_format = workbook.add_format(
+            {
+                "bold": True,
+                "font_color": "#17302d",
+                "bg_color": "#d8eeea",
+                "border": 1,
+                "border_color": "#a7cfc8",
+                "align": "left",
+                "valign": "vcenter",
+            }
+        )
+        cell_format = workbook.add_format(
+            {
+                "border": 1,
+                "border_color": "#d7e4e0",
+                "valign": "top",
+                "text_wrap": True,
+            }
+        )
+
+        for col_num, column_name in enumerate(export_df.columns):
+            worksheet.write(0, col_num, column_name, header_format)
+            column_values = [str(column_name)] + export_df.iloc[:, col_num].astype(str).tolist()
+            max_len = min(max(len(value) for value in column_values) + 2, 28)
+            worksheet.set_column(col_num, col_num, max(12, max_len), cell_format)
+
+        worksheet.freeze_panes(1, 0)
+        worksheet.autofilter(0, 0, len(export_df), max(len(export_df.columns) - 1, 0))
+
+    output.seek(0)
+    return output.getvalue()
+
+
+def dataframe_to_pdf_bytes(df: pd.DataFrame, title: str) -> bytes:
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.units import mm
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("Pro export do PDF je potreba nainstalovat reportlab.") from exc
+
+    export_df = prepare_export_dataframe(df)
+    output = BytesIO()
+    doc = SimpleDocTemplate(
+        output,
+        pagesize=landscape(A4),
+        leftMargin=12 * mm,
+        rightMargin=12 * mm,
+        topMargin=12 * mm,
+        bottomMargin=12 * mm,
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = styles["Heading2"]
+    title_style.textColor = colors.HexColor("#17302d")
+    meta_style = styles["BodyText"]
+    meta_style.textColor = colors.HexColor("#5f716e")
+
+    data = [list(export_df.columns)] + export_df.astype(str).values.tolist()
+    safe_data = [[Paragraph(str(cell).replace("\n", "<br/>"), styles["BodyText"]) for cell in row] for row in data]
+
+    available_width = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
+    col_count = max(len(export_df.columns), 1)
+    col_width = available_width / col_count
+    table = Table(safe_data, colWidths=[col_width] * col_count, repeatRows=1)
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d8eeea")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#17302d")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("LEADING", (0, 0), (-1, -1), 10),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#bfdad4")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4fbf9")]),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                ("TOPPADDING", (0, 0), (-1, -1), 5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+
+    story = [
+        Paragraph(title, title_style),
+        Spacer(1, 4 * mm),
+        Paragraph(f"Vygenerovano: {datetime.now().strftime('%d.%m.%Y %H:%M')}", meta_style),
+        Spacer(1, 5 * mm),
+        table,
+    ]
+    doc.build(story)
+    output.seek(0)
+    return output.getvalue()
 
 
 def format_percent_metric(value: float | None) -> str:
     if value is None or pd.isna(value):
         return "N/A"
     return f"{value:.2f} %"
+
+
+def is_us_regular_market_open_now() -> bool:
+    # Hlavni americka seance 9:30-16:00 New York cas v pracovni dny.
+    ny_now = datetime.now(ZoneInfo("America/New_York"))
+    if ny_now.weekday() >= 5:
+        return False
+    market_open = ny_now.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = ny_now.replace(hour=16, minute=0, second=0, microsecond=0)
+    return market_open <= ny_now < market_close
+
+
+def is_us_premarket_now() -> bool:
+    # Premarket pro US akcie bereme orientacne jako 4:00-9:30 New York cas v pracovni dny.
+    ny_now = datetime.now(ZoneInfo("America/New_York"))
+    if ny_now.weekday() >= 5:
+        return False
+    market_open = ny_now.replace(hour=4, minute=0, second=0, microsecond=0)
+    regular_open = ny_now.replace(hour=9, minute=30, second=0, microsecond=0)
+    return market_open <= ny_now < regular_open
 
 
 def format_watchlist_badge(status: str) -> str:
@@ -611,24 +1238,35 @@ def apply_theme(theme: str) -> None:
                 border-right: 1px solid #d9e1ea;
             }
             [data-testid="stSidebar"] .sidebar-brand {
-                padding: 0.9rem 1rem 0.4rem 1rem;
-                margin-bottom: 0.8rem;
-                border-radius: 16px;
-                background: #ffffff;
-                border: 1px solid #d9e1ea;
-                box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+                padding: 0.35rem 0.15rem 1rem 0.15rem;
+                margin: 0 0 1.15rem 0;
+                border-radius: 0;
+                background: transparent;
+                border: none;
+                box-shadow: none;
+                position: relative;
+            }
+            [data-testid="stSidebar"] .sidebar-brand::after {
+                content: "";
+                display: block;
+                width: 100%;
+                height: 1px;
+                margin-top: 0.95rem;
+                background: linear-gradient(90deg, rgba(185, 220, 214, 0.95) 0%, rgba(217, 225, 234, 0.85) 62%, rgba(217, 225, 234, 0) 100%);
             }
             [data-testid="stSidebar"] .sidebar-kicker {
-                font-size: 0.72rem;
-                letter-spacing: 0.08em;
+                font-size: 0.74rem;
+                letter-spacing: 0.16em;
                 text-transform: uppercase;
-                color: #64748b;
-                margin-bottom: 0.2rem;
+                color: #6c8b87;
+                margin-bottom: 0.3rem;
+                font-weight: 600;
             }
             [data-testid="stSidebar"] .sidebar-title {
-                font-size: 1.3rem;
-                font-weight: 700;
-                color: #0f172a;
+                font-size: 1.52rem;
+                font-weight: 800;
+                color: #17302d;
+                line-height: 1.05;
             }
             [data-testid="stSidebar"] .sidebar-section {
                 font-size: 0.78rem;
@@ -638,15 +1276,41 @@ def apply_theme(theme: str) -> None:
                 margin: 0.8rem 0 0.35rem 0.15rem;
             }
             [data-testid="stSidebar"] div[role="radiogroup"] {
-                padding: 0.35rem;
-                border-radius: 16px;
-                background: rgba(255, 255, 255, 0.88);
-                border: 1px solid #d9e1ea;
+                padding: 0.1rem 0;
+                background: transparent;
+                border: none;
+                box-shadow: none;
             }
             [data-testid="stSidebar"] div[role="radiogroup"] label {
-                border-radius: 12px;
-                padding: 0.45rem 0.55rem;
-                margin-bottom: 0.2rem;
+                width: 100%;
+                border-radius: 18px;
+                padding: 0.86rem 1.15rem;
+                margin-bottom: 0.48rem;
+                border: 1px solid transparent;
+                background: transparent;
+                transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+            }
+            [data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child {
+                display: none;
+            }
+            [data-testid="stSidebar"] div[role="radiogroup"] label p {
+                font-size: 1.02rem;
+                font-weight: 500;
+                color: #627471;
+            }
+            [data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+                background: linear-gradient(180deg, #e5f4f1 0%, #dcefea 100%);
+                border-color: #d4e9e3;
+                transform: translateY(-1px);
+            }
+            [data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {
+                background: linear-gradient(180deg, #d8eeea 0%, #d2e9e4 100%);
+                border-color: rgba(29, 33, 38, 0.92);
+                box-shadow: 0 10px 24px rgba(143, 184, 176, 0.16);
+            }
+            [data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) p {
+                color: #203433;
+                font-weight: 600;
             }
             .page-hero {
                 margin: 0 0 1.2rem 0;
@@ -701,6 +1365,69 @@ def apply_theme(theme: str) -> None:
                 font-weight: 700;
                 color: #0f172a;
             }
+            .stTabs [data-baseweb="tab-list"] {
+                gap: 0.35rem;
+                border-bottom: 1px solid #d9e1ea;
+                padding-bottom: 0.32rem;
+            }
+            .stTabs {
+                margin-top: 0.35rem;
+            }
+            .stTabs [data-baseweb="tab"] {
+                height: auto;
+                background: transparent;
+                border-radius: 0.8rem 0.8rem 0 0;
+                padding: 0.68rem 1rem 0.72rem 1rem;
+                margin: 0;
+                color: #64748b;
+                font-weight: 600;
+                transition: background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+            }
+            .stTabs [data-baseweb="tab"]:hover {
+                background: rgba(148, 163, 184, 0.12);
+                color: #0f172a;
+            }
+            .stTabs [data-baseweb="tab"][aria-selected="true"] {
+                background: linear-gradient(180deg, rgba(216, 238, 234, 0.95) 0%, rgba(210, 233, 228, 0.98) 100%);
+                color: #dc2626;
+                font-weight: 800;
+                border: 1px solid rgba(29, 33, 38, 0.92);
+                box-shadow: 0 8px 18px rgba(143, 184, 176, 0.12);
+                border-bottom: 2px solid rgba(255, 90, 95, 0.75);
+            }
+            [data-testid="stHorizontalBlock"]:has(.fake-toolbar-anchor) {
+                align-items: center;
+                margin: 0.2rem 0 0.35rem 0;
+            }
+            [data-testid="stHorizontalBlock"]:has(.fake-toolbar-anchor) [data-testid="column"] {
+                display: flex;
+                align-items: center;
+            }
+            .fake-toolbar-anchor {
+                display: block;
+                min-height: 1px;
+            }
+            .fake-toolbar-title {
+                font-size: 1.08rem;
+                font-weight: 700;
+                color: #0f172a;
+                margin: 0;
+            }
+            [data-testid="stHorizontalBlock"]:has(.fake-toolbar-anchor) button[kind] {
+                min-height: 2rem;
+                padding: 0.15rem 0.6rem;
+                border-radius: 0.65rem;
+                border: 1px solid #d9e1ea;
+                background: #ffffff;
+                color: #0f172a;
+                font-size: 0.76rem;
+                font-weight: 700;
+                letter-spacing: 0.04em;
+            }
+            [data-testid="stHorizontalBlock"]:has(.fake-toolbar-anchor) button[kind]:hover {
+                border-color: #c7d2e0;
+                background: #f8fafc;
+            }
             </style>
             """,
             unsafe_allow_html=True,
@@ -715,24 +1442,35 @@ def apply_theme(theme: str) -> None:
                 border-right: 1px solid #232b38;
             }
             [data-testid="stSidebar"] .sidebar-brand {
-                padding: 0.9rem 1rem 0.4rem 1rem;
-                margin-bottom: 0.8rem;
-                border-radius: 16px;
-                background: rgba(255, 255, 255, 0.03);
-                border: 1px solid #2a3443;
-                box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+                padding: 0.35rem 0.15rem 1rem 0.15rem;
+                margin: 0 0 1.15rem 0;
+                border-radius: 0;
+                background: transparent;
+                border: none;
+                box-shadow: none;
+                position: relative;
+            }
+            [data-testid="stSidebar"] .sidebar-brand::after {
+                content: "";
+                display: block;
+                width: 100%;
+                height: 1px;
+                margin-top: 0.95rem;
+                background: linear-gradient(90deg, rgba(190, 230, 223, 0.88) 0%, rgba(62, 77, 98, 0.72) 62%, rgba(62, 77, 98, 0) 100%);
             }
             [data-testid="stSidebar"] .sidebar-kicker {
-                font-size: 0.72rem;
-                letter-spacing: 0.08em;
+                font-size: 0.74rem;
+                letter-spacing: 0.16em;
                 text-transform: uppercase;
-                color: #8b9bb2;
-                margin-bottom: 0.2rem;
+                color: #9dbdb8;
+                margin-bottom: 0.3rem;
+                font-weight: 600;
             }
             [data-testid="stSidebar"] .sidebar-title {
-                font-size: 1.3rem;
-                font-weight: 700;
-                color: #f8fafc;
+                font-size: 1.52rem;
+                font-weight: 800;
+                color: #f2f7f6;
+                line-height: 1.05;
             }
             [data-testid="stSidebar"] .sidebar-section {
                 font-size: 0.78rem;
@@ -742,15 +1480,41 @@ def apply_theme(theme: str) -> None:
                 margin: 0.8rem 0 0.35rem 0.15rem;
             }
             [data-testid="stSidebar"] div[role="radiogroup"] {
-                padding: 0.35rem;
-                border-radius: 16px;
-                background: rgba(255, 255, 255, 0.03);
-                border: 1px solid #2a3443;
+                padding: 0.1rem 0;
+                background: transparent;
+                border: none;
+                box-shadow: none;
             }
             [data-testid="stSidebar"] div[role="radiogroup"] label {
-                border-radius: 12px;
-                padding: 0.45rem 0.55rem;
-                margin-bottom: 0.2rem;
+                width: 100%;
+                border-radius: 18px;
+                padding: 0.86rem 1.15rem;
+                margin-bottom: 0.48rem;
+                border: 1px solid transparent;
+                background: transparent;
+                transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+            }
+            [data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child {
+                display: none;
+            }
+            [data-testid="stSidebar"] div[role="radiogroup"] label p {
+                font-size: 1.02rem;
+                font-weight: 500;
+                color: #d3ddd9;
+            }
+            [data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+                background: linear-gradient(180deg, rgba(196, 233, 226, 0.18) 0%, rgba(173, 217, 210, 0.14) 100%);
+                border-color: rgba(186, 223, 216, 0.14);
+                transform: translateY(-1px);
+            }
+            [data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {
+                background: linear-gradient(180deg, rgba(201, 234, 228, 0.96) 0%, rgba(183, 223, 216, 0.92) 100%);
+                border-color: rgba(11, 16, 21, 0.96);
+                box-shadow: 0 12px 24px rgba(0, 0, 0, 0.14);
+            }
+            [data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) p {
+                color: #132624;
+                font-weight: 600;
             }
             .page-hero {
                 margin: 0 0 1.2rem 0;
@@ -805,6 +1569,70 @@ def apply_theme(theme: str) -> None:
                 font-size: 1.2rem;
                 font-weight: 700;
                 color: #f8fafc;
+            }
+            .stTabs [data-baseweb="tab-list"] {
+                gap: 0.4rem;
+                border-bottom: 1px solid #263142;
+                padding-bottom: 0.38rem;
+            }
+            .stTabs {
+                margin-top: 0.35rem;
+            }
+            .stTabs [data-baseweb="tab"] {
+                height: auto;
+                background: transparent;
+                border-radius: 0.85rem 0.85rem 0 0;
+                padding: 0.72rem 1.02rem 0.76rem 1.02rem;
+                margin: 0;
+                color: #a8b5c7;
+                font-weight: 600;
+                transition: background-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+            }
+            .stTabs [data-baseweb="tab"]:hover {
+                background: rgba(255,255,255,0.05);
+                color: #f8fafc;
+            }
+            .stTabs [data-baseweb="tab"][aria-selected="true"] {
+                background: linear-gradient(180deg, rgba(201, 234, 228, 0.16) 0%, rgba(183, 223, 216, 0.12) 100%);
+                color: #ff676c;
+                font-weight: 800;
+                border: 1px solid rgba(92, 125, 118, 0.42);
+                box-shadow: 0 10px 24px rgba(143, 184, 176, 0.1);
+                border-bottom: 2px solid rgba(255, 90, 95, 0.72);
+            }
+            [data-testid="stHorizontalBlock"]:has(.fake-toolbar-anchor) {
+                align-items: center;
+                margin: 0.2rem 0 0.35rem 0;
+            }
+            [data-testid="stHorizontalBlock"]:has(.fake-toolbar-anchor) [data-testid="column"] {
+                display: flex;
+                align-items: center;
+            }
+            .fake-toolbar-anchor {
+                display: block;
+                min-height: 1px;
+            }
+            .fake-toolbar-title {
+                font-size: 1.08rem;
+                font-weight: 700;
+                color: #f8fafc;
+                margin: 0;
+            }
+            [data-testid="stHorizontalBlock"]:has(.fake-toolbar-anchor) button[kind] {
+                min-height: 2rem;
+                padding: 0.15rem 0.6rem;
+                border-radius: 0.65rem;
+                border: 1px solid #2c3646;
+                background: linear-gradient(180deg, rgba(25, 30, 40, 0.98) 0%, rgba(18, 22, 31, 0.98) 100%);
+                color: #f8fafc;
+                font-size: 0.76rem;
+                font-weight: 700;
+                letter-spacing: 0.04em;
+                box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+            }
+            [data-testid="stHorizontalBlock"]:has(.fake-toolbar-anchor) button[kind]:hover {
+                border-color: #41506a;
+                background: linear-gradient(180deg, rgba(31, 37, 48, 1) 0%, rgba(22, 27, 36, 1) 100%);
             }
             </style>
             """,
@@ -1049,10 +1877,37 @@ def get_ticker_details(ticker: str) -> dict:
     if history.empty:
         raise ValueError(f"Pro ticker {ticker} se nepodarilo nacist data.")
 
-    current_price = float(history["Close"].iloc[-1])
-    previous_close = float(history["Close"].iloc[-2]) if len(history) > 1 else current_price
+    regular_market_price = pd.to_numeric(info.get("regularMarketPrice"), errors="coerce")
+    regular_market_previous_close = pd.to_numeric(info.get("regularMarketPreviousClose"), errors="coerce")
+    history_latest_close = float(history["Close"].iloc[-1])
+    history_previous_close = float(history["Close"].iloc[-2]) if len(history) > 1 else history_latest_close
+    use_live_us_session = is_us_regular_market_open_now()
+
+    if use_live_us_session and pd.notna(regular_market_price) and regular_market_price:
+        current_price = float(regular_market_price)
+        previous_close = (
+            float(regular_market_previous_close)
+            if pd.notna(regular_market_previous_close) and regular_market_previous_close
+            else history_previous_close
+        )
+    else:
+        current_price = history_latest_close
+        previous_close = history_previous_close
+
     daily_change = current_price - previous_close
     daily_change_pct = (daily_change / previous_close * 100) if previous_close else 0.0
+    premarket_reference_close = (
+        float(regular_market_previous_close)
+        if pd.notna(regular_market_previous_close) and regular_market_previous_close
+        else history_previous_close
+    )
+    premarket_price_raw = pd.to_numeric(info.get("preMarketPrice"), errors="coerce")
+    premarket_price = float(premarket_price_raw) if pd.notna(premarket_price_raw) and float(premarket_price_raw) > 0 else None
+    premarket_change_pct = (
+        ((premarket_price - premarket_reference_close) / premarket_reference_close * 100)
+        if premarket_price is not None and premarket_reference_close
+        else None
+    )
 
     currency = info.get("currency", "USD")
     fx_rate = get_fx_rate_to_usd(currency)
@@ -1084,6 +1939,8 @@ def get_ticker_details(ticker: str) -> dict:
         "market_cap": market_cap,
         "beta": beta,
         "company_live": info.get("shortName"),
+        "premarket_price": premarket_price,
+        "premarket_change_pct": premarket_change_pct,
     }
 
 
@@ -1920,6 +2777,7 @@ def build_report_performance_rows(
 
     rows = [
         {"Obdobi": "Dnes", "value_change_usd": total_daily_change_usd, "value_change_pct": total_daily_change_pct, "clean_performance_pct": None, "clean_performance_value_usd": None, "clean_with_closed_pct": None, "clean_with_closed_value_usd": None, "spy_pct": None, "msci_pct": None},
+        {"Obdobi": "Predchozi obchodni den", "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_performance_value_usd": None, "clean_with_closed_pct": None, "clean_with_closed_value_usd": None, "spy_pct": None, "msci_pct": None},
         {"Obdobi": "Od zacatku tydne", "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_performance_value_usd": None, "clean_with_closed_pct": None, "clean_with_closed_value_usd": None, "spy_pct": None, "msci_pct": None},
         {"Obdobi": "Od zacatku mesice", "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_performance_value_usd": None, "clean_with_closed_pct": None, "clean_with_closed_value_usd": None, "spy_pct": None, "msci_pct": None},
         {"Obdobi": "Od zacatku roku", "value_change_usd": None, "value_change_pct": None, "clean_performance_pct": None, "clean_performance_value_usd": None, "clean_with_closed_pct": None, "clean_with_closed_value_usd": None, "spy_pct": None, "msci_pct": None},
@@ -1931,7 +2789,7 @@ def build_report_performance_rows(
 
     anchor_dates = [start_of_week, start_of_month, start_of_year]
 
-    for index, anchor_date in enumerate(anchor_dates, start=1):
+    for index, anchor_date in enumerate(anchor_dates, start=2):
         absolute, percent = calculate_performance_from_date(history_df, anchor_date)
         rows[index]["value_change_usd"] = absolute
         rows[index]["value_change_pct"] = percent
@@ -1954,7 +2812,7 @@ def build_report_performance_rows(
         rows[index]["spy_pct"] = calculate_series_performance_from_date(spy_history_df, "benchmark_value", anchor_date)[1]
         rows[index]["msci_pct"] = calculate_series_performance_from_date(msci_history_df, "benchmark_value", anchor_date)[1]
 
-    for offset, year_value in enumerate(previous_years, start=4):
+    for offset, year_value in enumerate(previous_years, start=5):
         year_start = pd.Timestamp(year=year_value, month=1, day=1)
         year_end = pd.Timestamp(year=year_value, month=12, day=31)
         absolute, percent = calculate_performance_between_dates(history_df, year_start, year_end)
@@ -1980,32 +2838,32 @@ def build_report_performance_rows(
         rows[offset]["msci_pct"] = calculate_series_performance_between_dates(msci_history_df, "benchmark_value", year_start, year_end)[1]
 
     absolute, percent = calculate_performance(history_df["portfolio_value"]) if not history_df.empty else (None, None)
-    rows[7]["value_change_usd"] = absolute
-    rows[7]["value_change_pct"] = percent
+    rows[8]["value_change_usd"] = absolute
+    rows[8]["value_change_pct"] = percent
     start_date_all = pd.to_datetime(clean_history_df["Date"].min(), errors="coerce") if not clean_history_df.empty else None
-    rows[7]["clean_performance_pct"] = calculate_clean_performance_from_date(
+    rows[8]["clean_performance_pct"] = calculate_clean_performance_from_date(
         clean_history_df,
         start_date_all,
     ) if start_date_all is not None else None
     period_start_value = get_period_start_value(history_df, start_date_all) if start_date_all is not None else None
-    rows[7]["clean_performance_value_usd"] = calculate_clean_performance_value(
-        rows[7]["clean_performance_pct"],
+    rows[8]["clean_performance_value_usd"] = calculate_clean_performance_value(
+        rows[8]["clean_performance_pct"],
         period_start_value,
     )
     realized_result = calculate_realized_result_between_dates(closed_positions_df, start_date_all) if start_date_all is not None else 0.0
-    rows[7]["clean_with_closed_value_usd"] = calculate_combined_performance_value(
-        rows[7]["clean_performance_value_usd"],
+    rows[8]["clean_with_closed_value_usd"] = calculate_combined_performance_value(
+        rows[8]["clean_performance_value_usd"],
         realized_result,
     )
-    rows[7]["clean_with_closed_pct"] = calculate_combined_performance_pct(
-        rows[7]["clean_performance_pct"],
+    rows[8]["clean_with_closed_pct"] = calculate_combined_performance_pct(
+        rows[8]["clean_performance_pct"],
         realized_result,
         period_start_value,
     )
     portfolio_start_date = pd.to_datetime(history_df["Date"].min(), errors="coerce") if not history_df.empty else None
     if pd.notna(portfolio_start_date):
-        rows[7]["spy_pct"] = calculate_series_performance_from_date(spy_history_df, "benchmark_value", portfolio_start_date)[1]
-        rows[7]["msci_pct"] = calculate_series_performance_from_date(msci_history_df, "benchmark_value", portfolio_start_date)[1]
+        rows[8]["spy_pct"] = calculate_series_performance_from_date(spy_history_df, "benchmark_value", portfolio_start_date)[1]
+        rows[8]["msci_pct"] = calculate_series_performance_from_date(msci_history_df, "benchmark_value", portfolio_start_date)[1]
 
     previous_day_start = None
     report_end_date = None
@@ -2045,6 +2903,37 @@ def build_report_performance_rows(
         rows[0]["msci_pct"] = calculate_performance(msci_history_df["benchmark_value"])[1]
         if pd.notna(rows[0]["msci_pct"]):
             rows[0]["msci_pct"] = ((float(msci_history_df["benchmark_value"].iloc[-1]) / float(msci_history_df["benchmark_value"].iloc[-2])) - 1) * 100
+
+    if not history_df.empty and "portfolio_value" in history_df.columns:
+        latest_history = history_df.dropna(subset=["portfolio_value"]).copy()
+        if len(latest_history) >= 3:
+            previous_trading_start = safe_float(latest_history["portfolio_value"].iloc[-3])
+            previous_trading_end = safe_float(latest_history["portfolio_value"].iloc[-2])
+            if previous_trading_start not in (None, 0) and previous_trading_end is not None:
+                rows[1]["value_change_usd"] = previous_trading_end - previous_trading_start
+                rows[1]["value_change_pct"] = ((previous_trading_end / previous_trading_start) - 1) * 100
+            rows[1]["clean_performance_pct"] = rows[1]["value_change_pct"]
+            rows[1]["clean_performance_value_usd"] = rows[1]["value_change_usd"]
+            previous_trading_start_date = pd.to_datetime(latest_history["Date"].iloc[-2], errors="coerce")
+            previous_day_realized_result = calculate_realized_result_between_dates(
+                closed_positions_df,
+                previous_trading_start_date,
+                previous_trading_start_date,
+            ) if pd.notna(previous_trading_start_date) else 0.0
+            rows[1]["clean_with_closed_value_usd"] = calculate_combined_performance_value(
+                rows[1]["clean_performance_value_usd"],
+                previous_day_realized_result,
+            )
+            rows[1]["clean_with_closed_pct"] = calculate_combined_performance_pct(
+                rows[1]["clean_performance_pct"],
+                previous_day_realized_result,
+                previous_trading_start,
+            )
+
+    if len(spy_history_df) >= 3:
+        rows[1]["spy_pct"] = ((float(spy_history_df["benchmark_value"].iloc[-2]) / float(spy_history_df["benchmark_value"].iloc[-3])) - 1) * 100
+    if len(msci_history_df) >= 3:
+        rows[1]["msci_pct"] = ((float(msci_history_df["benchmark_value"].iloc[-2]) / float(msci_history_df["benchmark_value"].iloc[-3])) - 1) * 100
 
     return pd.DataFrame(rows)
 
@@ -2887,6 +3776,11 @@ selected_fx_pairs = settings["fx_pairs"]
 show_fx_rates = settings["show_fx_rates"]
 apply_theme(settings["theme"])
 
+if not st.session_state.get("market_data_cache_reset_done", False):
+    get_ticker_details.clear()
+    get_price_history.clear()
+    st.session_state["market_data_cache_reset_done"] = True
+
 raw_df = load_portfolio()
 watchlist_df = load_watchlist()
 analysis_df = load_analysis()
@@ -2894,6 +3788,7 @@ analysis_history_df = load_analysis_history()
 long_term_plans_df = load_long_term_plans()
 long_term_checks_df = load_long_term_checks()
 transactions_df = load_transactions(raw_df)
+earnings_df = load_earnings_calendar()
 
 with st.sidebar:
     st.markdown(
@@ -2908,7 +3803,7 @@ with st.sidebar:
     st.markdown('<div class="sidebar-section">Menu</div>', unsafe_allow_html=True)
     current_page = st.radio(
         "Menu",
-        ["Dashboard", "Portfolio", "Watchlist", "Planovani", t("transactions", language), t("reports", language), t("settings", language)],
+        ["Dashboard", "Portfolio", "Watchlist", "Planovani", t("earnings", language), t("transactions", language), t("reports", language), t("settings", language)],
         label_visibility="collapsed",
     )
 
@@ -2992,13 +3887,23 @@ if current_page == t("watchlist", language):
             primary_col, secondary_col = st.columns([1.5, 0.8])
             with primary_col:
                 render_section_intro("Decision board", "Hlavni prehled s barevnymi statusy, buy zónami a prioritami.")
-                st.dataframe(styled_overview_df, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    styled_overview_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=build_table_column_config(visible_overview_df),
+                )
             with secondary_col:
                 render_section_intro("Priority", "Rychly shortlist kandidatu, kteri si zaslouzi pozornost.")
                 priority_source_df = watchlist_priority_data.copy()
                 priority_source_df["Status"] = priority_source_df["Status"].apply(format_watchlist_badge)
                 priority_df = priority_source_df[["Ticker", "Status", "Vzdalenost od buy zony"]].head(6)
-                st.dataframe(priority_df, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    priority_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=build_table_column_config(priority_df),
+                )
         else:
             st.info("Watchlist je prazdny.")
 
@@ -3137,7 +4042,11 @@ if current_page == "Planovani" and planning_subpage == t("analysis", language):
                 "Posledni revize",
             ]
         ]
-        selected_analysis_ticker = st.selectbox("Ticker", analysis_tickers)
+        analysis_selection_key = "analysis_overview_table_selection"
+        selected_analysis_ticker = st.session_state.get("analysis_selected_ticker", analysis_tickers[0])
+        if selected_analysis_ticker not in analysis_tickers:
+            selected_analysis_ticker = analysis_tickers[0]
+
         selected_plan = analysis_df[analysis_df["ticker"] == selected_analysis_ticker]
         selected_history = analysis_history_df[analysis_history_df["ticker"] == selected_analysis_ticker].copy()
         selected_overview = analysis_overview_df[analysis_overview_df["Ticker"] == selected_analysis_ticker].iloc[0]
@@ -3158,10 +4067,13 @@ if current_page == "Planovani" and planning_subpage == t("analysis", language):
 
         with overview_col:
             render_section_intro("Coverage overview", "Dominantni prehled firem, upside a dalsiho kroku.")
-            st.dataframe(
+            overview_event = st.dataframe(
                 display_overview_df,
                 use_container_width=True,
                 hide_index=True,
+                key=analysis_selection_key,
+                on_select="rerun",
+                selection_mode="single-row",
                 column_config={
                     "Ticker": st.column_config.TextColumn(help="Burzovni zkratka akcie nebo ETF."),
                     "Spolecnost": st.column_config.TextColumn(help="Nazev firmy nebo fondu."),
@@ -3175,11 +4087,35 @@ if current_page == "Planovani" and planning_subpage == t("analysis", language):
                     "Posledni revize": st.column_config.TextColumn(help="Kdy jsi plan naposledy upravil."),
                 },
             )
+            selected_rows = overview_event.selection.get("rows", []) if overview_event and hasattr(overview_event, "selection") else []
+            if selected_rows:
+                selected_row_index = selected_rows[0]
+                selected_analysis_ticker = str(display_overview_df.iloc[selected_row_index]["Ticker"])
+                st.session_state["analysis_selected_ticker"] = selected_analysis_ticker
+            elif st.session_state.get("analysis_selected_ticker") not in analysis_tickers:
+                st.session_state["analysis_selected_ticker"] = analysis_tickers[0]
+
+        selected_analysis_ticker = st.session_state.get("analysis_selected_ticker", selected_analysis_ticker)
+        selected_plan = analysis_df[analysis_df["ticker"] == selected_analysis_ticker]
+        selected_history = analysis_history_df[analysis_history_df["ticker"] == selected_analysis_ticker].copy()
+        selected_overview = analysis_overview_df[analysis_overview_df["Ticker"] == selected_analysis_ticker].iloc[0]
+
+        company_name = "N/A"
+        if len(selected_plan) > 0 and pd.notna(selected_plan.iloc[0]["company"]):
+            company_name = selected_plan.iloc[0]["company"]
+        else:
+            portfolio_match = raw_df[raw_df["ticker"] == selected_analysis_ticker]
+            if len(portfolio_match) > 0 and pd.notna(portfolio_match.iloc[0]["company"]):
+                company_name = portfolio_match.iloc[0]["company"]
+            else:
+                watchlist_match = watchlist_df[watchlist_df["ticker"] == selected_analysis_ticker]
+                if len(watchlist_match) > 0 and pd.notna(watchlist_match.iloc[0]["company"]):
+                    company_name = watchlist_match.iloc[0]["company"]
 
         with detail_col:
             render_section_intro("Vybrana firma", "Detail zvolene pozice a investicniho planu.")
-            st.write(f"**Ticker:** {selected_analysis_ticker}")
-            st.write(f"**Spolecnost:** {company_name}")
+            detail_company_name = company_name if company_name and str(company_name).strip() else "N/A"
+            st.markdown(f"### {selected_analysis_ticker}: {detail_company_name}")
             st.write(f"**Aktualni cena:** {selected_overview['Aktualni cena']}")
             st.write(f"**Prumerna nakupni cena:** {selected_overview['Prumerna nakupni cena']}")
             st.write(f"**Cilova cena:** {selected_overview['Cilova cena']}")
@@ -3215,18 +4151,86 @@ if current_page == "Planovani" and planning_subpage == t("analysis", language):
                 status_value = current_plan.get("status", "") if pd.notna(current_plan.get("status", None)) else ""
                 conviction_value = current_plan.get("conviction", "") if pd.notna(current_plan.get("conviction", None)) else ""
                 next_action_value = current_plan.get("next_action", "") if pd.notna(current_plan.get("next_action", None)) else ""
+                thesis_value = current_plan.get("investment_thesis", "")
+                thesis_value = "" if pd.isna(thesis_value) else str(thesis_value)
+                buy_plan_value = current_plan.get("buy_plan", "")
+                buy_plan_value = "" if pd.isna(buy_plan_value) else str(buy_plan_value)
+                sell_plan_value = current_plan.get("sell_plan", "")
+                sell_plan_value = "" if pd.isna(sell_plan_value) else str(sell_plan_value)
+                risk_notes_value = current_plan.get("risk_notes", "")
+                risk_notes_value = "" if pd.isna(risk_notes_value) else str(risk_notes_value)
+                last_note_value = current_plan.get("last_note", "")
+                last_note_value = "" if pd.isna(last_note_value) else str(last_note_value)
 
-                avg_buy_price_input = st.number_input("Prumerna nakupni cena", min_value=0.0, value=float(avg_buy_price_value) if pd.notna(avg_buy_price_value) else 0.0, step=0.01)
-                target_price_input = st.number_input("Cilova cena", min_value=0.0, value=float(target_price_value) if pd.notna(target_price_value) else 0.0, step=0.01)
-                invalidation_input = st.number_input("Invalidation level", min_value=0.0, value=float(invalidation_value) if pd.notna(invalidation_value) else 0.0, step=0.01)
-                status_input = st.selectbox("Status", ["N/A", "Building", "Hold", "Review", "Trim", "Exit"], index=["N/A", "Building", "Hold", "Review", "Trim", "Exit"].index(status_value) if status_value in ["N/A", "Building", "Hold", "Review", "Trim", "Exit"] else 0)
-                conviction_input = st.selectbox("Conviction", ["N/A", "Low", "Medium", "High"], index=["N/A", "Low", "Medium", "High"].index(conviction_value) if conviction_value in ["N/A", "Low", "Medium", "High"] else 0)
-                next_action_input = st.text_input("Dalsi akce", value=next_action_value)
-                thesis = st.text_area("Investicni teze", value=current_plan.get("investment_thesis", ""))
-                buy_plan = st.text_area("Buy plan", value=current_plan.get("buy_plan", ""))
-                sell_plan = st.text_area("Sell plan", value=current_plan.get("sell_plan", ""))
-                risk_notes = st.text_area("Risk notes", value=current_plan.get("risk_notes", ""))
-                last_note = st.text_area("Posledni poznamka", value=current_plan.get("last_note", ""))
+                avg_buy_price_input = st.number_input(
+                    "Prumerna nakupni cena",
+                    min_value=0.0,
+                    value=float(avg_buy_price_value) if pd.notna(avg_buy_price_value) else 0.0,
+                    step=0.01,
+                    help="Prumerna cena, za kterou mas tuto pozici nakoupenou. Pomaha porovnat, jak daleko je aktualni cena od tveho nakupu.",
+                )
+                target_price_input = st.number_input(
+                    "Cilova cena",
+                    min_value=0.0,
+                    value=float(target_price_value) if pd.notna(target_price_value) else 0.0,
+                    step=0.01,
+                    help="Cena, na kterou cilis podle sve teze. Mela by odpovidat tomu, kde vidis ferovou hodnotu nebo misto pro prodej casti pozice.",
+                )
+                invalidation_input = st.number_input(
+                    "Invalidation level",
+                    min_value=0.0,
+                    value=float(invalidation_value) if pd.notna(invalidation_value) else 0.0,
+                    step=0.01,
+                    help="Uroven, kde by se tvoje teze prestala potvrzovat. Typicky cena nebo hranice, pri ktere plan znovu prehodnotis.",
+                )
+                status_input = st.selectbox(
+                    "Status",
+                    ["N/A", "Building", "Hold", "Review", "Trim", "Exit"],
+                    index=["N/A", "Building", "Hold", "Review", "Trim", "Exit"].index(status_value) if status_value in ["N/A", "Building", "Hold", "Review", "Trim", "Exit"] else 0,
+                    help="Aktualni stav pozice v planu. Building = budujes pozici, Hold = pouze drzis, Review = chces znovu proverit, Trim = zvazujes ubrani, Exit = uvazujes odchod.",
+                )
+                conviction_input = st.selectbox(
+                    "Conviction",
+                    ["N/A", "Low", "Medium", "High"],
+                    index=["N/A", "Low", "Medium", "High"].index(conviction_value) if conviction_value in ["N/A", "Low", "Medium", "High"] else 0,
+                    help="Jak silne veris sve tezi. Low = nizka jistota, Medium = rozumna duvera, High = vysoka duvera v dlouhodoby plan.",
+                )
+                next_action_input = st.text_input(
+                    "Dalsi akce",
+                    value=next_action_value,
+                    help="Kratky dalsi konkretni krok. Napriklad: pockat na vysledky, dokoupit pri poklesu, zkontrolovat valuation.",
+                    placeholder="Napriklad pockat na pullback k supportu",
+                )
+                thesis = st.text_area(
+                    "Investicni teze",
+                    value=thesis_value,
+                    help="Proc tuto firmu drzis nebo sledujes. Strucne shrnuti hlavnich duvodu, proc ma investice smysl.",
+                    placeholder="Napriklad silny rust cash flow, AI poptavka, kvalitni management...",
+                )
+                buy_plan = st.text_area(
+                    "Buy plan",
+                    value=buy_plan_value,
+                    help="Za jakych podminek chces prikupovat. Muze obsahovat cenove urovne, valuaci nebo situace, ktere chces videt.",
+                    placeholder="Napriklad dalsi nakup pri cene 180-190 USD nebo po potvrzeni rustu marzi",
+                )
+                sell_plan = st.text_area(
+                    "Sell plan",
+                    value=sell_plan_value,
+                    help="Kdy a proc bys prodaval. Muze jit o cilovou cenu, zhorseni teze nebo prilis vysokou valuaci.",
+                    placeholder="Napriklad cast pozice prodat nad 260 USD nebo pri zhorseni fundamentals",
+                )
+                risk_notes = st.text_area(
+                    "Risk notes",
+                    value=risk_notes_value,
+                    help="Hlavni rizika, ktera mohou plan pokazit. Napriklad dluh, konkurence, regulace, pokles poptavky.",
+                    placeholder="Napriklad cyklicnost trhu, tlak na marze, slabe vysledky",
+                )
+                last_note = st.text_area(
+                    "Posledni poznamka",
+                    value=last_note_value,
+                    help="Posledni kratka poznamka k tomu, co se zmenilo nebo co je potreba sledovat pri dalsi revizi.",
+                    placeholder="Napriklad po earnings potvrzen vyhled, dalsi kontrola za 3 mesice",
+                )
                 save_plan_button = st.form_submit_button("Ulozit plan")
 
                 if save_plan_button:
@@ -3270,6 +4274,7 @@ if current_page == "Planovani" and planning_subpage == t("analysis", language):
                     selected_history[["Datum", "Typ", "Cena", "Plan", "Komentar"]],
                     use_container_width=True,
                     hide_index=True,
+                    column_config=build_table_column_config(selected_history[["Datum", "Typ", "Cena", "Plan", "Komentar"]]),
                 )
             else:
                 st.info("Historie rozhodnuti je zatim prazdna.")
@@ -3333,6 +4338,21 @@ if current_page == "Planovani" and planning_subpage == t("long_term_plan", langu
             ),
             use_container_width=True,
             hide_index=True,
+            column_config=build_table_column_config(
+                long_term_plans_df.rename(
+                    columns={
+                        "plan_name": "Plan",
+                        "start_period": "Zacatek",
+                        "target_period": "Cilove obdobi",
+                        "start_value": "Start value",
+                        "target_value": "Target value",
+                        "monthly_contribution": "Mesicni vklad",
+                        "expected_return_pct": "Ocekavany vynos %",
+                        "plan_notes": "Poznamky k planu",
+                        "asset_notes": "Poznamky k aktivum",
+                    }
+                )
+            ),
         )
     else:
         st.info("Zatim nemas ulozeny zadny dlouhodoby plan.")
@@ -3516,6 +4536,22 @@ if current_page == "Planovani" and planning_subpage == t("long_term_plan", langu
                     ],
                     use_container_width=True,
                     hide_index=True,
+                    column_config=build_table_column_config(
+                        display_checks[
+                            [
+                                "Obdobi",
+                                "Datum",
+                                "Plan",
+                                "Skutecnost",
+                                "Odchylka",
+                                "Splneni %",
+                                "Rezim",
+                                "Poznamka plan",
+                                "Poznamka aktiva",
+                                "Dalsi krok",
+                            ]
+                        ]
+                    ),
                 )
 
                 edit_options = [
@@ -3612,6 +4648,279 @@ if current_page == "Planovani" and planning_subpage == t("long_term_plan", langu
             else:
                 st.info("Nejdriv uloz alespon jeden plan.")
 
+if current_page == t("earnings", language):
+    render_page_header("Vysledky", "Kalendar vysledku firem s auto doplnenim terminu a odhadu a s moznosti rucni upravy.", "Earnings")
+    earnings_universe_df = build_earnings_universe(raw_df, watchlist_df, analysis_df)
+    portfolio_tickers = set(raw_df["ticker"].astype(str).str.upper().tolist()) if len(raw_df) > 0 else set()
+    watchlist_tickers = set(watchlist_df["ticker"].astype(str).str.upper().tolist()) if len(watchlist_df) > 0 else set()
+
+    if len(earnings_universe_df) == 0:
+        st.info("V portfoliu, watchlistu ani planu zatim nejsou zadne firmy pro earnings kalendar.")
+    else:
+        if len(earnings_df) == 0:
+            with st.spinner("Nacitam earnings data pro firmy z portfolia a watchlistu..."):
+                earnings_df, _ = merge_auto_earnings_data(earnings_df, earnings_universe_df)
+                save_earnings_calendar(earnings_df)
+                st.rerun()
+
+        known_tickers = set(earnings_df["ticker"].astype(str).str.upper().tolist()) if len(earnings_df) > 0 else set()
+        missing_rows = earnings_universe_df[~earnings_universe_df["ticker"].astype(str).str.upper().isin(known_tickers)].copy()
+        if len(missing_rows) > 0:
+            timestamp_now = datetime.now().strftime("%Y-%m-%d %H:%M")
+            for row in missing_rows.itertuples(index=False):
+                earnings_df = pd.concat(
+                    [
+                        earnings_df,
+                        pd.DataFrame(
+                            [
+                                {
+                                    "ticker": clean_text_value(row.ticker).upper(),
+                                    "company": clean_text_value(row.company),
+                                    "yfinance_ticker": clean_text_value(row.yfinance_ticker) or clean_text_value(row.ticker).upper(),
+                                    "earnings_date": "",
+                                    "earnings_time": "TBD",
+                                    "eps_estimate": None,
+                                    "revenue_estimate": None,
+                                    "eps_actual": None,
+                                    "revenue_actual": None,
+                                    "eps_surprise_pct": None,
+                                    "revenue_surprise_pct": None,
+                                    "status": "Bez dat",
+                                    "source": "manual",
+                                    "is_manual_override": False,
+                                    "note": "",
+                                    "updated_at": timestamp_now,
+                                }
+                            ]
+                        ),
+                    ],
+                    ignore_index=True,
+                )
+            save_earnings_calendar(earnings_df)
+
+        if len(earnings_df) > 0:
+            earnings_df["status"] = earnings_df.apply(infer_earnings_status, axis=1)
+
+        upcoming_count = int((earnings_df["status"] == "Ceka se").sum()) if len(earnings_df) > 0 else 0
+        today_count = int((earnings_df["status"] == "Dnes").sum()) if len(earnings_df) > 0 else 0
+        manual_count = int(earnings_df["is_manual_override"].fillna(False).sum()) if len(earnings_df) > 0 else 0
+        reported_count = int((earnings_df["status"] == "Vyhlaseno").sum()) if len(earnings_df) > 0 else 0
+        render_kpi_cards(
+            [
+                {"label": "Sledovane firmy", "value": str(len(earnings_df)), "delta": "Portfolio + watchlist + plan"},
+                {"label": "Ceka se", "value": str(upcoming_count), "delta": "Budouci earnings"},
+                {"label": "Dnes", "value": str(today_count), "delta": "Vysledky dnes"},
+                {"label": "Vyhlaseno", "value": str(reported_count), "delta": "Se skutecnosti"},
+            ]
+        )
+
+        st.caption("Data se zkousi doplnit automaticky z Yahoo Finance. Kdyz neco chybi nebo chces vlastni cisla, muzes radek rucne upravit a zamknout proti dalsimu prepisu.")
+        refresh_col, force_col = st.columns([1.2, 2.4])
+        force_override = force_col.checkbox(
+            "Pri refreshi prepsat i rucne upravene radky",
+            value=False,
+            help="Kdyz zapnes, automaticke nacteni prepise i radky, ktere sis rucne zamkl.",
+        )
+        if refresh_col.button("Obnovit auto data", use_container_width=True):
+            with st.spinner("Obnovuji earnings data..."):
+                earnings_df, refreshed_tickers = merge_auto_earnings_data(
+                    earnings_df,
+                    earnings_universe_df,
+                    force_manual_override=force_override,
+                )
+                save_earnings_calendar(earnings_df)
+            if refreshed_tickers:
+                st.success(f"Auto data obnovena pro: {', '.join(refreshed_tickers)}")
+            else:
+                st.info("Nebyly nalezeny zadne tickery pro obnovu.")
+            st.rerun()
+
+        display_earnings_df = earnings_df.copy()
+        if len(display_earnings_df) > 0:
+            display_earnings_df["Seznam"] = display_earnings_df["ticker"].apply(
+                lambda ticker: classify_earnings_membership(ticker, portfolio_tickers, watchlist_tickers)
+            )
+            display_earnings_df["Datum vysledku"] = display_earnings_df["earnings_date"].apply(
+                lambda value: format_earnings_date_value(value, date_format_label)
+            )
+            display_earnings_df["Cas"] = display_earnings_df["earnings_time"].apply(normalize_earnings_time_label)
+            display_earnings_df["EPS odhad"] = display_earnings_df["eps_estimate"].apply(
+                lambda value: "N/A" if pd.isna(value) else f"{float(value):.2f}"
+            )
+            display_earnings_df["Revenue odhad"] = display_earnings_df["revenue_estimate"].apply(
+                lambda value: format_large_number(value) if pd.notna(value) else "N/A"
+            )
+            display_earnings_df["EPS realita"] = display_earnings_df["eps_actual"].apply(
+                lambda value: "N/A" if pd.isna(value) else f"{float(value):.2f}"
+            )
+            display_earnings_df["Revenue realita"] = display_earnings_df["revenue_actual"].apply(
+                lambda value: format_large_number(value) if pd.notna(value) else "N/A"
+            )
+            display_earnings_df["EPS surprise"] = display_earnings_df["eps_surprise_pct"].apply(
+                lambda value: "N/A" if pd.isna(value) else f"{float(value):.2f} %"
+            )
+            display_earnings_df["Zdroj"] = display_earnings_df.apply(
+                lambda row: "Manual lock" if bool(row.get("is_manual_override", False)) else ("Auto" if clean_text_value(row.get("source", "")) == "auto" else "Manual"),
+                axis=1,
+            )
+            display_earnings_df = display_earnings_df.sort_values(by=["earnings_date", "ticker"], na_position="last")
+
+        earnings_tickers = display_earnings_df["ticker"].astype(str).tolist() if len(display_earnings_df) > 0 else earnings_universe_df["ticker"].astype(str).tolist()
+        selected_earnings_ticker = st.session_state.get("selected_earnings_ticker", earnings_tickers[0])
+        if selected_earnings_ticker not in earnings_tickers:
+            selected_earnings_ticker = earnings_tickers[0]
+
+        earnings_selection_key = "earnings_overview_selection"
+        overview_col, detail_col = st.columns([1.55, 1.0])
+
+        with overview_col:
+            render_section_intro("Earnings kalendar", "Prehled terminu, odhadu analytiku a skutecnosti po vyhlaseni.")
+            earnings_overview_df = display_earnings_df[
+                [
+                    "ticker",
+                    "company",
+                    "Seznam",
+                    "Datum vysledku",
+                    "Cas",
+                    "EPS odhad",
+                    "Revenue odhad",
+                    "EPS realita",
+                    "Revenue realita",
+                    "EPS surprise",
+                    "status",
+                    "Zdroj",
+                ]
+            ].rename(
+                columns={
+                    "ticker": "Ticker",
+                    "company": "Spolecnost",
+                    "status": "Status",
+                }
+            ).reset_index(drop=True)
+            earnings_overview_event = st.dataframe(
+                earnings_overview_df,
+                use_container_width=True,
+                hide_index=True,
+                key=earnings_selection_key,
+                on_select="rerun",
+                selection_mode="single-row",
+                column_config=build_table_column_config(
+                    earnings_overview_df
+                ),
+            )
+            selected_rows = earnings_overview_event.selection.get("rows", []) if earnings_overview_event and hasattr(earnings_overview_event, "selection") else []
+            if selected_rows:
+                selected_row_index = selected_rows[0]
+                selected_earnings_ticker = str(earnings_overview_df.iloc[selected_row_index]["Ticker"])
+                st.session_state["selected_earnings_ticker"] = selected_earnings_ticker
+            elif st.session_state.get("selected_earnings_ticker") not in earnings_tickers:
+                st.session_state["selected_earnings_ticker"] = earnings_tickers[0]
+
+        selected_earnings_ticker = st.session_state.get("selected_earnings_ticker", selected_earnings_ticker)
+        selected_earnings_row = earnings_df[earnings_df["ticker"] == selected_earnings_ticker].iloc[0]
+
+        with detail_col:
+            render_section_intro("Vybrana firma", "Detail zvolene firmy a moznost okamzite manualni upravy.")
+            detail_date_text = format_earnings_date_value(selected_earnings_row.get("earnings_date", ""), date_format_label)
+            detail_time_text = normalize_earnings_time_label(selected_earnings_row.get("earnings_time", ""))
+            detail_eps_estimate = "N/A" if pd.isna(selected_earnings_row.get("eps_estimate")) else f"{float(selected_earnings_row.get('eps_estimate')):.2f}"
+            detail_revenue_estimate = format_large_number(selected_earnings_row.get("revenue_estimate")) if pd.notna(selected_earnings_row.get("revenue_estimate")) else "N/A"
+            detail_eps_actual = "N/A" if pd.isna(selected_earnings_row.get("eps_actual")) else f"{float(selected_earnings_row.get('eps_actual')):.2f}"
+            detail_revenue_actual = format_large_number(selected_earnings_row.get("revenue_actual")) if pd.notna(selected_earnings_row.get("revenue_actual")) else "N/A"
+            detail_eps_surprise = "N/A" if pd.isna(selected_earnings_row.get("eps_surprise_pct")) else f"{float(selected_earnings_row.get('eps_surprise_pct')):.2f} %"
+            detail_company_name = clean_text_value(selected_earnings_row.get("company", "")) or "N/A"
+            detail_membership = classify_earnings_membership(selected_earnings_ticker, portfolio_tickers, watchlist_tickers)
+            st.markdown(f"### {selected_earnings_ticker}: {detail_company_name}")
+            st.write(f"**Seznam:** {detail_membership}")
+            st.write(f"**Datum vysledku:** {detail_date_text}")
+            st.write(f"**Cas:** {detail_time_text}")
+            st.write(f"**EPS odhad:** {detail_eps_estimate}")
+            st.write(f"**Revenue odhad:** {detail_revenue_estimate}")
+            st.write(f"**EPS realita:** {detail_eps_actual}")
+            st.write(f"**Revenue realita:** {detail_revenue_actual}")
+            st.write(f"**EPS surprise:** {detail_eps_surprise}")
+            st.write(f"**Status:** {clean_text_value(selected_earnings_row.get('status', '')) or 'N/A'}")
+            st.write(f"**Poznamka:** {clean_text_value(selected_earnings_row.get('note', '')) or 'N/A'}")
+            st.caption(f"Naposledy aktualizovano: {clean_text_value(selected_earnings_row.get('updated_at', '')) or 'N/A'}")
+
+        edit_col, guide_col = st.columns([1.2, 0.8])
+        with edit_col:
+            render_section_intro("Rucni uprava", "Auto data muzes upravit a pripadne zamknout proti dalsimu refreshi.")
+            if st.button("Doplnit automaticky pro vybranou firmu", use_container_width=False):
+                selected_universe = earnings_universe_df[earnings_universe_df["ticker"] == selected_earnings_ticker]
+                if len(selected_universe) > 0:
+                    with st.spinner("Nacitam auto data pro vybranou firmu..."):
+                        earnings_df, _ = merge_auto_earnings_data(earnings_df, selected_universe, force_manual_override=True)
+                        save_earnings_calendar(earnings_df)
+                    st.success(f"Auto data obnovena pro {selected_earnings_ticker}.")
+                    st.rerun()
+
+            current_date_value = pd.to_datetime(selected_earnings_row.get("earnings_date", ""), errors="coerce")
+            if pd.isna(current_date_value):
+                current_date_value = pd.Timestamp(datetime.now().date())
+            current_time_value = normalize_earnings_time_label(selected_earnings_row.get("earnings_time", "")) or "TBD"
+            earnings_time_options = ["TBD", "Before open", "After close", "During market"]
+
+            with st.form("earnings_manual_edit_form"):
+                manual_use_empty_date = st.checkbox(
+                    "Datum vysledku zatim nezname",
+                    value=pd.isna(pd.to_datetime(selected_earnings_row.get("earnings_date", ""), errors="coerce")),
+                )
+                manual_date = st.date_input(
+                    "Datum vysledku",
+                    value=current_date_value.date(),
+                    help="Planovane datum zverejneni vysledku. Kdyz firma termin jeste nema potvrzeny, nech checkbox vyse zapnuty.",
+                )
+                manual_time = st.selectbox(
+                    "Cas",
+                    earnings_time_options,
+                    index=earnings_time_options.index(current_time_value) if current_time_value in earnings_time_options else 0,
+                    help="Kdy firma typicky zverejni vysledky: pred otevrenim trhu, po zavreni nebo behem dne.",
+                )
+                manual_eps_estimate = st.text_input("EPS odhad", value="" if pd.isna(selected_earnings_row.get("eps_estimate")) else str(selected_earnings_row.get("eps_estimate")))
+                manual_revenue_estimate = st.text_input("Revenue odhad", value="" if pd.isna(selected_earnings_row.get("revenue_estimate")) else str(selected_earnings_row.get("revenue_estimate")))
+                manual_eps_actual = st.text_input("EPS realita", value="" if pd.isna(selected_earnings_row.get("eps_actual")) else str(selected_earnings_row.get("eps_actual")))
+                manual_revenue_actual = st.text_input("Revenue realita", value="" if pd.isna(selected_earnings_row.get("revenue_actual")) else str(selected_earnings_row.get("revenue_actual")))
+                manual_eps_surprise = st.text_input("EPS surprise %", value="" if pd.isna(selected_earnings_row.get("eps_surprise_pct")) else str(selected_earnings_row.get("eps_surprise_pct")))
+                manual_revenue_surprise = st.text_input("Revenue surprise %", value="" if pd.isna(selected_earnings_row.get("revenue_surprise_pct")) else str(selected_earnings_row.get("revenue_surprise_pct")))
+                manual_note = st.text_area(
+                    "Poznamka",
+                    value=clean_text_value(selected_earnings_row.get("note", "")),
+                    help="Vlastni komentar, co sledovat. Napriklad guidance, marze, objednavky nebo komentar managementu.",
+                )
+                manual_lock = st.checkbox(
+                    "Zamknout rucni upravy proti automatickemu refreshi",
+                    value=bool(selected_earnings_row.get("is_manual_override", False)),
+                )
+                save_earnings_button = st.form_submit_button("Ulozit upravu")
+
+                if save_earnings_button:
+                    selected_index = earnings_df.index[earnings_df["ticker"] == selected_earnings_ticker][0]
+                    earnings_df.loc[selected_index, "earnings_date"] = "" if manual_use_empty_date else str(manual_date)
+                    earnings_df.loc[selected_index, "earnings_time"] = manual_time
+                    earnings_df.loc[selected_index, "eps_estimate"] = safe_float(manual_eps_estimate)
+                    earnings_df.loc[selected_index, "revenue_estimate"] = safe_float(manual_revenue_estimate)
+                    earnings_df.loc[selected_index, "eps_actual"] = safe_float(manual_eps_actual)
+                    earnings_df.loc[selected_index, "revenue_actual"] = safe_float(manual_revenue_actual)
+                    earnings_df.loc[selected_index, "eps_surprise_pct"] = safe_float(manual_eps_surprise)
+                    earnings_df.loc[selected_index, "revenue_surprise_pct"] = safe_float(manual_revenue_surprise)
+                    earnings_df.loc[selected_index, "note"] = manual_note
+                    earnings_df.loc[selected_index, "source"] = "manual"
+                    earnings_df.loc[selected_index, "is_manual_override"] = bool(manual_lock)
+                    earnings_df.loc[selected_index, "updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    earnings_df.loc[selected_index, "status"] = infer_earnings_status(earnings_df.loc[selected_index])
+                    save_earnings_calendar(earnings_df)
+                    st.success("Earnings radek byl ulozen.")
+                    st.rerun()
+
+        with guide_col:
+            render_section_intro("Jak to pouzivat", "Strucna logika cele sekce.")
+            st.write("**Auto data:** aplikace zkousi doplnit datum, cas a cast odhadu z Yahoo Finance.")
+            st.write("**Rucni uprava:** kdyz neco chybi, cisla muzes doplnit sam.")
+            st.write("**Zamek:** zamcene radky se pri beznem refreshi neprepisi.")
+            st.write("**Revenue:** kdyz zdroj nedoda trzby, pole nech prazdne a dopln je po vysledcich.")
+            st.write("**Poznamka:** hod se na vlastni checklist k earnings callu.")
+
 # Hlavni prehled pracuje se sloucenymi pozicemi.
 df = aggregate_portfolio(raw_df)
 
@@ -3637,6 +4946,8 @@ if len(df) > 0:
                     "market_cap": None,
                     "beta": None,
                     "company_live": None,
+                    "premarket_price": None,
+                    "premarket_change_pct": None,
                 }
             )
 
@@ -3669,6 +4980,8 @@ else:
     df["earnings_yield"] = []
     df["market_cap"] = []
     df["beta"] = []
+    df["premarket_price"] = []
+    df["premarket_change_pct"] = []
     df["cost_usd"] = []
     df["value_usd"] = []
     df["profit_loss_usd"] = []
@@ -3680,6 +4993,10 @@ df["daily_change_base"] = df["daily_change_position_usd"].apply(lambda value: co
 df["value_base"] = df["value_usd"].apply(lambda value: convert_from_usd(value, base_currency))
 df["profit_loss_base"] = df["profit_loss_usd"].apply(lambda value: convert_from_usd(value, base_currency))
 df["price_display"] = df.apply(lambda row: format_price_with_currency(row["price"], row["currency"]), axis=1) if len(df) > 0 else []
+df["premarket_price_display"] = df.apply(
+    lambda row: format_price_with_currency(row["premarket_price"], row["currency"]) if pd.notna(row["premarket_price"]) else "N/A",
+    axis=1,
+) if len(df) > 0 else []
 df["buy_price_display"] = df.apply(
     lambda row: format_price_with_currency(row["buy_price"], row["currency"] if pd.notna(row["currency"]) else "USD"),
     axis=1,
@@ -3705,11 +5022,32 @@ if current_page == "Dashboard":
     total_daily_change = float(df["daily_change_base"].sum()) if len(df) > 0 else 0.0
     previous_total_value = total_value - total_daily_change
     total_daily_change_pct = (total_daily_change / previous_total_value * 100) if previous_total_value else None
+    dashboard_earnings_df = earnings_df.copy() if len(earnings_df) > 0 else pd.DataFrame()
+    if len(dashboard_earnings_df) > 0:
+        today = pd.Timestamp(datetime.now().date())
+        current_week_start = today - pd.to_timedelta(today.weekday(), unit="D")
+        next_week_end = current_week_start + pd.Timedelta(days=13)
+        dashboard_earnings_df["earnings_date_sort"] = pd.to_datetime(dashboard_earnings_df["earnings_date"], errors="coerce")
+        dashboard_earnings_df = dashboard_earnings_df.dropna(subset=["earnings_date_sort"])
+        dashboard_earnings_df = dashboard_earnings_df[
+            dashboard_earnings_df["earnings_date_sort"] >= today
+        ].sort_values("earnings_date_sort")
+        dashboard_earnings_df["Firma"] = dashboard_earnings_df["company"].apply(lambda value: clean_text_value(value) or "N/A")
+        dashboard_earnings_df["Datum"] = dashboard_earnings_df["earnings_date"].apply(
+            lambda value: format_earnings_date_value(value, date_format_label)
+        )
+    else:
+        today = pd.Timestamp(datetime.now().date())
+        current_week_start = today - pd.to_timedelta(today.weekday(), unit="D")
+        next_week_end = current_week_start + pd.Timedelta(days=13)
+
+    owned_tickers = set(raw_df["ticker"].astype(str).str.upper().tolist()) if len(raw_df) > 0 else set()
+    watchlist_tickers = set(watchlist_df["ticker"].astype(str).str.upper().tolist()) if len(watchlist_df) > 0 else set()
     render_kpi_cards(
         [
-            {"label": "Hodnota portfolia", "value": format_currency_metric(total_value, base_currency), "delta": "Executive view"},
-            {"label": "Denni zmena", "value": format_currency_metric(total_daily_change, base_currency), "delta": format_percent_metric(total_daily_change_pct)},
-            {"label": "Celkovy zisk", "value": format_currency_metric(total_profit_loss, base_currency), "delta": format_percent_metric(total_return_pct)},
+            {"label": "Hodnota portfolia", "value": format_currency_metric(total_value, base_currency, decimals=0, thousands_sep="."), "delta": "Executive view"},
+            {"label": "Denni zmena", "value": format_currency_metric(total_daily_change, base_currency, decimals=0, thousands_sep="."), "delta": f"Vs poslednimu close | {format_percent_metric(total_daily_change_pct)}"},
+            {"label": "Celkovy zisk", "value": format_currency_metric(total_profit_loss, base_currency, decimals=0, thousands_sep="."), "delta": format_percent_metric(total_return_pct)},
             {"label": "Zhodnoceni", "value": format_percent_metric(total_return_pct), "delta": "Od nakupu"},
             {"label": "Posledni update", "value": last_updated, "delta": "Live market snapshot"},
         ]
@@ -3770,6 +5108,18 @@ if current_page == "Dashboard":
             st.plotly_chart(dashboard_fig, use_container_width=True)
         else:
             st.info("Pro dashboard zatim nejsou dostupna historicka data.")
+
+        render_section_intro("Alokace", "Aktualni rozlozeni portfolia podle nejvetsich pozic.")
+        if len(df) > 0 and total_value != 0:
+            allocation_fig = px.pie(df, names="ticker", values="value_base", hole=0.62)
+            allocation_fig.update_layout(
+                margin=dict(l=20, r=20, t=10, b=10),
+                showlegend=True,
+                height=430,
+            )
+            st.plotly_chart(allocation_fig, use_container_width=True)
+        else:
+            st.info("N/A")
     with side_card:
         render_section_intro("Top movers", "Nejlepsi a nejslabsi pohyb dne v kompaktnim prehledu.")
         if len(df) > 0:
@@ -3807,6 +5157,7 @@ if current_page == "Dashboard":
                     top_gainers_df[["Ticker", "Aktualni hodnota", "Denni pohyb %", "Denni pohyb"]].head(3),
                     use_container_width=True,
                     hide_index=True,
+                    column_config=build_table_column_config(top_gainers_df[["Ticker", "Aktualni hodnota", "Denni pohyb %", "Denni pohyb"]].head(3)),
                 )
             else:
                 st.info("N/A")
@@ -3817,6 +5168,7 @@ if current_page == "Dashboard":
                     top_losers_df[["Ticker", "Aktualni hodnota", "Denni pohyb %", "Denni pohyb"]].head(3),
                     use_container_width=True,
                     hide_index=True,
+                    column_config=build_table_column_config(top_losers_df[["Ticker", "Aktualni hodnota", "Denni pohyb %", "Denni pohyb"]].head(3)),
                 )
             else:
                 st.info("N/A")
@@ -3844,58 +5196,100 @@ if current_page == "Dashboard":
                         "Rozdil vs portfolio": "N/A" if difference_vs_portfolio is None else f"{difference_vs_portfolio:.2f} p. b.",
                     }
                 )
-            st.dataframe(pd.DataFrame(market_rows), use_container_width=True, hide_index=True)
-        else:
-            st.info("N/A")
-
-    allocation_col, watchlist_col = st.columns([1.1, 1])
-    with allocation_col:
-        render_section_intro("Alokace", "Aktualni rozlozeni portfolia podle nejvetsich pozic.")
-        if len(df) > 0 and total_value != 0:
-            allocation_fig = px.pie(df, names="ticker", values="value_base", hole=0.58)
-            allocation_fig.update_layout(margin=dict(l=20, r=20, t=20, b=20), showlegend=True)
-            st.plotly_chart(allocation_fig, use_container_width=True)
-        else:
-            st.info("N/A")
-    with watchlist_col:
-        render_section_intro("Akcni radar", "Kratsi seznam kandidatu z watchlistu a jejich aktualni status.")
-        dashboard_watchlist_df = sort_watchlist_priority(build_watchlist_overview(watchlist_df))
-        if len(dashboard_watchlist_df) > 0:
-            dashboard_watchlist_df["Status"] = dashboard_watchlist_df["Status"].apply(format_watchlist_badge)
-            dashboard_watchlist_display = dashboard_watchlist_df[
-                ["Ticker", "Aktualni cena", "Buy zone", "Plan nakupu", "Status"]
-            ].head(6)
-            dashboard_watchlist_hidden = dashboard_watchlist_df[
-                ["_current_price_value", "_buy_plan_value", "_watchlist_status"]
-            ].head(6)
-
-            def style_dashboard_watchlist_row(row: pd.Series) -> list[str]:
-                hidden_row = dashboard_watchlist_hidden.loc[row.name]
-                current_price = hidden_row.get("_current_price_value")
-                buy_plan = hidden_row.get("_buy_plan_value")
-                status = hidden_row.get("_watchlist_status")
-
-                if pd.notna(current_price) and pd.notna(buy_plan) and current_price <= buy_plan:
-                    return ["background-color: rgba(34, 197, 94, 0.22); border-left: 3px solid #22c55e"] * len(row)
-                if status in ["V nakupni zone", "Pod nakupni zonou"]:
-                    return ["background-color: rgba(34, 197, 94, 0.12)"] * len(row)
-                return [""] * len(row)
-
             st.dataframe(
-                dashboard_watchlist_display.style.apply(style_dashboard_watchlist_row, axis=1),
+                pd.DataFrame(market_rows),
                 use_container_width=True,
                 hide_index=True,
+                column_config=build_table_column_config(pd.DataFrame(market_rows)),
             )
+
+            render_section_intro("Akcni radar", "Kratsi seznam kandidatu z watchlistu a jejich aktualni status.")
+            dashboard_watchlist_df = sort_watchlist_priority(build_watchlist_overview(watchlist_df))
+            if len(dashboard_watchlist_df) > 0:
+                dashboard_watchlist_df["Status"] = dashboard_watchlist_df["Status"].apply(format_watchlist_badge)
+                dashboard_watchlist_display = dashboard_watchlist_df[
+                    ["Ticker", "Aktualni cena", "Buy zone", "Plan nakupu", "Status"]
+                ].head(6)
+                dashboard_watchlist_hidden = dashboard_watchlist_df[
+                    ["_current_price_value", "_buy_plan_value", "_watchlist_status"]
+                ].head(6)
+
+                def style_dashboard_watchlist_row(row: pd.Series) -> list[str]:
+                    hidden_row = dashboard_watchlist_hidden.loc[row.name]
+                    current_price = hidden_row.get("_current_price_value")
+                    buy_plan = hidden_row.get("_buy_plan_value")
+                    status = hidden_row.get("_watchlist_status")
+
+                    if pd.notna(current_price) and pd.notna(buy_plan) and current_price <= buy_plan:
+                        return ["background-color: rgba(34, 197, 94, 0.22); border-left: 3px solid #22c55e"] * len(row)
+                    if status in ["V nakupni zone", "Pod nakupni zonou"]:
+                        return ["background-color: rgba(34, 197, 94, 0.12)"] * len(row)
+                    return [""] * len(row)
+
+                st.dataframe(
+                    dashboard_watchlist_display.style.apply(style_dashboard_watchlist_row, axis=1),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=build_table_column_config(dashboard_watchlist_display),
+                )
+            else:
+                st.info("N/A")
+
+            render_section_intro("Earnings tento a pristi tyden", "Jen nejblizsi vysledky, rozdelene na portfolio a watchlist.")
+            st.caption("Vlastnene firmy")
+            if len(dashboard_earnings_df) > 0:
+                owned_all_earnings = dashboard_earnings_df[
+                    dashboard_earnings_df["ticker"].astype(str).str.upper().isin(owned_tickers)
+                ].copy()
+                owned_dashboard_earnings = owned_all_earnings[
+                    owned_all_earnings["earnings_date_sort"] <= next_week_end
+                ][["Firma", "Datum"]].head(5)
+                if len(owned_dashboard_earnings) < 2:
+                    owned_dashboard_earnings = owned_all_earnings[["Firma", "Datum"]].head(2)
+                if len(owned_dashboard_earnings) > 0:
+                    st.dataframe(
+                        owned_dashboard_earnings,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config=build_table_column_config(owned_dashboard_earnings),
+                    )
+                else:
+                    st.info("N/A")
+            else:
+                st.info("N/A")
+
+            st.caption("Watchlist")
+            if len(dashboard_earnings_df) > 0:
+                watchlist_all_earnings = dashboard_earnings_df[
+                    dashboard_earnings_df["ticker"].astype(str).str.upper().isin(watchlist_tickers - owned_tickers)
+                ].copy()
+                watchlist_dashboard_earnings = watchlist_all_earnings[
+                    watchlist_all_earnings["earnings_date_sort"] <= next_week_end
+                ][["Firma", "Datum"]].head(5)
+                if len(watchlist_dashboard_earnings) < 2:
+                    watchlist_dashboard_earnings = watchlist_all_earnings[["Firma", "Datum"]].head(2)
+                if len(watchlist_dashboard_earnings) > 0:
+                    st.dataframe(
+                        watchlist_dashboard_earnings,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config=build_table_column_config(watchlist_dashboard_earnings),
+                    )
+                else:
+                    st.info("N/A")
+            else:
+                st.info("N/A")
         else:
             st.info("N/A")
+
 
 if current_page == t("transactions", language):
     render_page_header("Transakce", "Evidence obchodu, otevrenych lotu, uzavrenych pozic a danoveho pohledu.", "Execution")
     render_kpi_cards(
         [
-            {"label": "Realizovany vysledek", "value": format_currency_metric(transaction_summary["realized_total_base"], base_currency), "delta": "Uzavrene obchody"},
-            {"label": "Nerealizovany vysledek", "value": format_currency_metric(transaction_summary["unrealized_total_base"], base_currency), "delta": "Aktualne otevrene pozice"},
-            {"label": "Celkovy vysledek", "value": format_currency_metric(transaction_summary["total_result_base"], base_currency), "delta": "Realized + unrealized"},
+            {"label": "Realizovany vysledek", "value": format_currency_metric(transaction_summary["realized_total_base"], base_currency, decimals=0, thousands_sep="."), "delta": "Uzavrene obchody"},
+            {"label": "Nerealizovany vysledek", "value": format_currency_metric(transaction_summary["unrealized_total_base"], base_currency, decimals=0, thousands_sep="."), "delta": "Aktualne otevrene pozice"},
+            {"label": "Celkovy vysledek", "value": format_currency_metric(transaction_summary["total_result_base"], base_currency, decimals=0, thousands_sep="."), "delta": "Realized + unrealized"},
             {"label": "Uzavrene obchody", "value": str(len(transaction_summary["closed_positions"])), "delta": "FIFO evidence"},
         ]
     )
@@ -3940,9 +5334,12 @@ if current_page == t("transactions", language):
                 transactions_display_df,
                 use_container_width=True,
                 hide_index=True,
-                column_config={
+                column_config=build_table_column_config(
+                    transactions_display_df,
+                    {
                     "Datum": st.column_config.DateColumn(format=date_format_label),
-                },
+                    },
+                ),
             )
         else:
             st.info("N/A")
@@ -4100,6 +5497,21 @@ if current_page == t("transactions", language):
                 ],
                 use_container_width=True,
                 hide_index=True,
+                column_config=build_table_column_config(
+                    open_positions_display[
+                        [
+                            "Ticker",
+                            "Spolecnost",
+                            "Pocet kusu",
+                            "Prumerna nakupni cena",
+                            "Aktualni cena",
+                            "Current Value",
+                            "Nerealizovany zisk / ztrata",
+                            "Nerealizovany zisk / ztrata %",
+                            "Mena",
+                        ]
+                    ]
+                ),
             )
         else:
             st.info("N/A")
@@ -4139,6 +5551,25 @@ if current_page == t("transactions", language):
                 ],
                 use_container_width=True,
                 hide_index=True,
+                column_config=build_table_column_config(
+                    closed_positions_display[
+                        [
+                            "Ticker",
+                            "Spolecnost",
+                            "Datum nakupu",
+                            "Datum prodeje",
+                            "Pocet kusu",
+                            "Prumerna nakupni cena",
+                            "Prumerna prodejni cena",
+                            "Poplatky v nastavene mene",
+                            "Realizovany zisk / ztrata",
+                            "Realizovany zisk / ztrata %",
+                            "Mena",
+                            "Broker",
+                            "Poznamka",
+                        ]
+                    ]
+                ),
             )
         else:
             st.info("N/A")
@@ -4156,24 +5587,79 @@ if current_page == t("transactions", language):
             tax_summary_display["Realizovane ztraty"] = tax_summary_display["Realizovane ztraty"].apply(lambda value: "N/A" if pd.isna(value) else f"{base_currency} {value:,.2f}")
             tax_summary_display["Realizovany vysledek"] = tax_summary_display["Realizovany vysledek"].apply(lambda value: "N/A" if pd.isna(value) else f"{base_currency} {value:,.2f}")
             tax_summary_display["Poplatky"] = tax_summary_display["Poplatky"].apply(lambda value: "N/A" if pd.isna(value) else f"{base_currency} {value:,.2f}")
+            tax_summary_export_df = tax_summary_display[
+                [
+                    "Rok realizace",
+                    "Prodejni obrat",
+                    "Realizovany vysledek mimo 3lety test",
+                    "Poplatky mimo 3lety test",
+                    "Realizovane zisky",
+                    "Realizovane ztraty",
+                    "Realizovany vysledek",
+                    "Poplatky",
+                    "Pocet uzavrenych obchodu",
+                ]
+            ].copy()
 
-            st.write("**Rocni souhrn**")
+            annual_excel_export_bytes = None
+            annual_pdf_export_bytes = None
+            annual_excel_export_error = None
+            annual_pdf_export_error = None
+
+            try:
+                annual_excel_export_bytes = dataframe_to_excel_bytes(tax_summary_export_df, sheet_name="Rocni souhrn")
+            except RuntimeError as exc:
+                annual_excel_export_error = str(exc)
+
+            try:
+                annual_pdf_export_bytes = dataframe_to_pdf_bytes(tax_summary_export_df, title="Danovy prehled - Rocni souhrn")
+            except RuntimeError as exc:
+                annual_pdf_export_error = str(exc)
+
+            toolbar_title_col, toolbar_spacer_col, toolbar_csv_col, toolbar_excel_col, toolbar_pdf_col = st.columns(
+                [2.4, 8.6, 1.1, 1.1, 1.1]
+            )
+            with toolbar_title_col:
+                st.markdown('<span class="fake-toolbar-anchor"></span><div class="fake-toolbar-title">Rocni souhrn</div>', unsafe_allow_html=True)
+            with toolbar_csv_col:
+                st.download_button(
+                    "CSV",
+                    data=tax_summary_export_df.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="danovy_prehled_rocni_souhrn.csv",
+                    mime="text/csv",
+                    key="annual_summary_toolbar_csv",
+                    use_container_width=True,
+                )
+            with toolbar_excel_col:
+                if annual_excel_export_bytes is not None:
+                    st.download_button(
+                        "XLSX",
+                        data=annual_excel_export_bytes,
+                        file_name="danovy_prehled_rocni_souhrn.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="annual_summary_toolbar_excel",
+                        use_container_width=True,
+                    )
+                elif annual_excel_export_error:
+                    st.caption(annual_excel_export_error)
+            with toolbar_pdf_col:
+                if annual_pdf_export_bytes is not None:
+                    st.download_button(
+                        "PDF",
+                        data=annual_pdf_export_bytes,
+                        file_name="danovy_prehled_rocni_souhrn.pdf",
+                        mime="application/pdf",
+                        key="annual_summary_toolbar_pdf",
+                        use_container_width=True,
+                    )
+                elif annual_pdf_export_error:
+                    st.caption(annual_pdf_export_error)
+
             st.dataframe(
-                tax_summary_display[
-                    [
-                        "Rok realizace",
-                        "Prodejni obrat",
-                        "Realizovany vysledek mimo 3lety test",
-                        "Poplatky mimo 3lety test",
-                        "Realizovane zisky",
-                        "Realizovane ztraty",
-                        "Realizovany vysledek",
-                        "Poplatky",
-                        "Pocet uzavrenych obchodu",
-                    ]
-                ],
+                tax_summary_export_df,
                 use_container_width=True,
                 hide_index=True,
+                column_config=build_table_column_config(tax_summary_export_df),
             )
 
             available_tax_years = tax_summary_display["Rok realizace"].dropna().astype(str).tolist()
@@ -4222,13 +5708,58 @@ if current_page == t("transactions", language):
                     ]
                 ].rename(columns={"Poplatky v nastavene mene": "Poplatky"})
 
-                st.dataframe(tax_export_df, use_container_width=True, hide_index=True)
-                st.download_button(
-                    "Exportovat danovy prehled do CSV",
-                    data=tax_export_df.to_csv(index=False).encode("utf-8-sig"),
-                    file_name=f"danovy_prehled_{selected_tax_year}.csv",
-                    mime="text/csv",
+                st.dataframe(
+                    tax_export_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=build_table_column_config(tax_export_df),
                 )
+                excel_export_bytes = None
+                pdf_export_bytes = None
+                excel_export_error = None
+                pdf_export_error = None
+
+                try:
+                    excel_export_bytes = dataframe_to_excel_bytes(tax_export_df, sheet_name="Danovy prehled")
+                except RuntimeError as exc:
+                    excel_export_error = str(exc)
+
+                try:
+                    pdf_export_bytes = dataframe_to_pdf_bytes(tax_export_df, title=f"Danovy prehled {selected_tax_year}")
+                except RuntimeError as exc:
+                    pdf_export_error = str(exc)
+
+                csv_col, excel_col, pdf_col = st.columns(3)
+                with csv_col:
+                    st.download_button(
+                        "Export CSV",
+                        data=tax_export_df.to_csv(index=False).encode("utf-8-sig"),
+                        file_name=f"danovy_prehled_{selected_tax_year}.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                    )
+                with excel_col:
+                    if excel_export_bytes is not None:
+                        st.download_button(
+                            "Export Excel",
+                            data=excel_export_bytes,
+                            file_name=f"danovy_prehled_{selected_tax_year}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                        )
+                    elif excel_export_error:
+                        st.caption(excel_export_error)
+                with pdf_col:
+                    if pdf_export_bytes is not None:
+                        st.download_button(
+                            "Export PDF",
+                            data=pdf_export_bytes,
+                            file_name=f"danovy_prehled_{selected_tax_year}.pdf",
+                            mime="application/pdf",
+                            use_container_width=True,
+                        )
+                    elif pdf_export_error:
+                        st.caption(pdf_export_error)
             else:
                 st.info("N/A")
         else:
@@ -4241,8 +5772,8 @@ if current_page == t("reports", language):
     reports_total_return_pct = (reports_total_result_base / reports_total_cost_base * 100) if reports_total_cost_base else None
     render_kpi_cards(
         [
-            {"label": "Hodnota portfolia", "value": format_currency_metric(total_value, base_currency), "delta": "Aktualni snapshot"},
-            {"label": "Celkovy vysledek", "value": format_currency_metric(reports_total_result_base, base_currency), "delta": "Vcetne realizovanych pozic"},
+            {"label": "Hodnota portfolia", "value": format_currency_metric(total_value, base_currency, decimals=0, thousands_sep="."), "delta": "Aktualni snapshot"},
+            {"label": "Celkovy vysledek", "value": format_currency_metric(reports_total_result_base, base_currency, decimals=0, thousands_sep="."), "delta": "Vcetne realizovanych pozic"},
             {"label": "Zhodnoceni", "value": format_percent_metric(reports_total_return_pct), "delta": "Vcetne realizovanych pozic"},
             {"label": "Posledni update", "value": last_updated, "delta": "Reporting layer"},
         ]
@@ -4365,6 +5896,7 @@ if current_page == t("reports", language):
             performance_rows[performance_columns],
             use_container_width=True,
             hide_index=True,
+            column_config=build_table_column_config(performance_rows[performance_columns]),
         )
 
         if missing_report_tickers:
@@ -4544,20 +6076,35 @@ if current_page == t("reports", language):
         with changes_col1:
             st.write("**Posledni zmeny v portfoliu**")
             if len(portfolio_changes_df) > 0:
-                st.dataframe(portfolio_changes_df, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    portfolio_changes_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=build_table_column_config(portfolio_changes_df),
+                )
             else:
                 st.info("N/A")
 
             st.write("**Posledni zmeny planu portfolia**")
             if len(plan_changes_df) > 0:
-                st.dataframe(plan_changes_df, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    plan_changes_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=build_table_column_config(plan_changes_df),
+                )
             else:
                 st.info("N/A")
 
         with changes_col2:
             st.write("**Posledni rozhodnuti**")
             if len(decision_changes_df) > 0:
-                st.dataframe(decision_changes_df, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    decision_changes_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=build_table_column_config(decision_changes_df),
+                )
             else:
                 st.info("N/A")
 
@@ -4581,6 +6128,7 @@ if current_page == t("reports", language):
                 allocation_df[["ticker", "Hodnota", "Podil %"]].rename(columns={"ticker": "Ticker"}),
                 use_container_width=True,
                 hide_index=True,
+                column_config=build_table_column_config(allocation_df[["ticker", "Hodnota", "Podil %"]].rename(columns={"ticker": "Ticker"})),
             )
 
             risk_fig = px.pie(
@@ -4615,6 +6163,11 @@ if current_page == t("reports", language):
                     ),
                     use_container_width=True,
                     hide_index=True,
+                    column_config=build_table_column_config(
+                        region_split[["Region", "Hodnota", "Podil %"]].assign(
+                            **{"Podil %": region_split["Podil %"].map(lambda value: f"{value:.2f} %")}
+                        )
+                    ),
                 )
             with region_col2:
                 region_fig = px.pie(
@@ -4640,6 +6193,11 @@ if current_page == t("reports", language):
                     ),
                     use_container_width=True,
                     hide_index=True,
+                    column_config=build_table_column_config(
+                        size_split[["Velikost spolecnosti", "Hodnota", "Podil %"]].assign(
+                            **{"Podil %": size_split["Podil %"].map(lambda value: f"{value:.2f} %")}
+                        )
+                    ),
                 )
             with size_col2:
                 size_fig = px.pie(
@@ -4659,6 +6217,7 @@ if current_page == t("reports", language):
                 currency_split[["Mena", "Podil %"]].rename(columns={"Podil %": "Podil %"}),
                 use_container_width=True,
                 hide_index=True,
+                column_config=build_table_column_config(currency_split[["Mena", "Podil %"]].rename(columns={"Podil %": "Podil %"})),
             )
 
             if float(top_position["weight_pct"]) >= 25:
@@ -4670,9 +6229,9 @@ if current_page == "Portfolio":
     portfolio_return_pct = (total_profit_loss / portfolio_cost_base_for_cards * 100) if portfolio_cost_base_for_cards else None
     render_kpi_cards(
         [
-            {"label": "Hodnota portfolia", "value": format_currency_metric(total_value, base_currency), "delta": "Aktualni velikost portfolia"},
-            {"label": "Denni zmena", "value": format_currency_metric(df["daily_change_base"].sum() if len(df) > 0 else 0.0, base_currency), "delta": format_percent_metric((df["daily_change_base"].sum() / (total_value - df["daily_change_base"].sum()) * 100) if len(df) > 0 and (total_value - df["daily_change_base"].sum()) else 0.0)},
-            {"label": "Celkovy zisk", "value": format_currency_metric(total_profit_loss, base_currency), "delta": format_percent_metric(portfolio_return_pct)},
+            {"label": "Hodnota portfolia", "value": format_currency_metric(total_value, base_currency, decimals=0, thousands_sep="."), "delta": "Aktualni velikost portfolia"},
+            {"label": "Denni zmena", "value": format_currency_metric(df["daily_change_base"].sum() if len(df) > 0 else 0.0, base_currency, decimals=0, thousands_sep="."), "delta": f"Vs poslednimu close | {format_percent_metric((df['daily_change_base'].sum() / (total_value - df['daily_change_base'].sum()) * 100) if len(df) > 0 and (total_value - df['daily_change_base'].sum()) else 0.0)}"},
+            {"label": "Celkovy zisk", "value": format_currency_metric(total_profit_loss, base_currency, decimals=0, thousands_sep="."), "delta": format_percent_metric(portfolio_return_pct)},
             {"label": "Pocet pozic", "value": str(len(df)), "delta": "Agregovane holdings"},
         ]
     )
@@ -4775,11 +6334,14 @@ if current_page == "Portfolio":
 
     with portfolio_overview_tab:
         render_section_intro("Holdings overview", "Hlavni tabulka zustava dominantni, detail a doplnkove grafy jsou az vedle a pod ni.")
+        show_premarket_columns = is_us_premarket_now()
         table_df = df[
             [
                 "ticker",
                 "company_display",
                 "price_display",
+                "premarket_price_display",
+                "premarket_change_pct",
                 "daily_change_pct",
                 "daily_change_base",
                 "shares",
@@ -4799,6 +6361,8 @@ if current_page == "Portfolio":
                 "ticker": "Ticker",
                 "company_display": "Spolecnost",
                 "price_display": "Aktualni hodnota",
+                "premarket_price_display": "Premarket cena",
+                "premarket_change_pct": "Premarket zmena %",
                 "daily_change_pct": "Denni pohyb %",
                 "daily_change_base": "Denni pohyb",
                 "shares": "Pocet",
@@ -4813,30 +6377,51 @@ if current_page == "Portfolio":
                 "market_cap_text": "Market Cap",
                 "beta_display": "Beta",
             }
-        )
+        ).reset_index(drop=True)
+        if not show_premarket_columns:
+            table_df = table_df.drop(columns=["Premarket cena", "Premarket zmena %"], errors="ignore")
         visible_table_columns = [column for column in visible_columns if column in table_df.columns]
+        if show_premarket_columns:
+            price_insert_index = visible_table_columns.index("Aktualni hodnota") + 1 if "Aktualni hodnota" in visible_table_columns else 0
+            for premarket_column in ["Premarket cena", "Premarket zmena %"]:
+                if premarket_column in table_df.columns and premarket_column not in visible_table_columns:
+                    visible_table_columns.insert(price_insert_index, premarket_column)
+                    price_insert_index += 1
         if not visible_table_columns:
             visible_table_columns = table_df.columns.tolist()
+        visible_row_count = len(table_df[visible_table_columns])
+        dataframe_kwargs = {
+            "use_container_width": True,
+            "hide_index": True,
+            "column_config": build_table_column_config(
+                table_df[visible_table_columns],
+                {
+                    "Aktualni hodnota": st.column_config.TextColumn(help="Aktualni cena jedne akcie v jeji mene."),
+                    "Premarket cena": st.column_config.TextColumn(help="Informacni premarket cena pred otevrenim americkeho trhu. Nezapocitava se do zadnych vypoctu."),
+                    "Premarket zmena %": st.column_config.NumberColumn(format="%.2f %%", help=TABLE_COLUMN_HELP["Premarket zmena %"]),
+                    "Denni pohyb %": st.column_config.NumberColumn(format="%.2f %%", help=TABLE_COLUMN_HELP["Denni pohyb %"]),
+                    "Denni pohyb": st.column_config.NumberColumn(format="%.2f", help=TABLE_COLUMN_HELP["Denni pohyb"]),
+                    "Pocet": st.column_config.NumberColumn(format="%.2f", help=TABLE_COLUMN_HELP["Pocet"]),
+                    "Nakupni cena": st.column_config.TextColumn(help=TABLE_COLUMN_HELP["Nakupni cena"]),
+                    "Current Value": st.column_config.NumberColumn(format=f"{base_currency} %.2f", help=TABLE_COLUMN_HELP["Current Value"]),
+                    "Kapitalovy zisk": st.column_config.NumberColumn(format=f"{base_currency} %.2f", help=TABLE_COLUMN_HELP["Kapitalovy zisk"]),
+                    "% Zisk": st.column_config.NumberColumn(format="%.2f %%", help=TABLE_COLUMN_HELP["% Zisk"]),
+                    "1 Year": st.column_config.LineChartColumn("1 Year", help=TABLE_COLUMN_HELP["1 Year"]),
+                    "PE": st.column_config.TextColumn(help=TABLE_COLUMN_HELP["PE"]),
+                    "EPS": st.column_config.TextColumn(help=TABLE_COLUMN_HELP["EPS"]),
+                    "Earnings Yield": st.column_config.TextColumn(help=TABLE_COLUMN_HELP["Earnings Yield"]),
+                    "Beta": st.column_config.TextColumn(help=TABLE_COLUMN_HELP["Beta"]),
+                },
+            ),
+        }
+        if visible_row_count <= 20:
+            dataframe_kwargs["height"] = 36 + visible_row_count * 35
+        else:
+            dataframe_kwargs["height"] = 740
 
         st.dataframe(
             table_df[visible_table_columns],
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Aktualni hodnota": st.column_config.TextColumn(help="Aktualni cena jedne akcie v jeji mene."),
-                "Denni pohyb %": st.column_config.NumberColumn(format="%.2f %%"),
-                "Denni pohyb": st.column_config.NumberColumn(format="%.2f"),
-                "Pocet": st.column_config.NumberColumn(format="%.2f"),
-                "Nakupni cena": st.column_config.TextColumn(),
-                "Current Value": st.column_config.NumberColumn(format=f"{base_currency} %.2f"),
-                "Kapitalovy zisk": st.column_config.NumberColumn(format=f"{base_currency} %.2f"),
-                "% Zisk": st.column_config.NumberColumn(format="%.2f %%"),
-                "1 Year": st.column_config.LineChartColumn("1 Year"),
-                "PE": st.column_config.TextColumn(),
-                "EPS": st.column_config.TextColumn(),
-                "Earnings Yield": st.column_config.TextColumn(),
-                "Beta": st.column_config.TextColumn(),
-            },
+            **dataframe_kwargs,
         )
 
         if show_fx_rates:
@@ -4866,11 +6451,14 @@ if current_page == "Portfolio":
                                 rates_df,
                                 use_container_width=True,
                                 hide_index=True,
-                                column_config={
-                                    "Par": st.column_config.TextColumn(width="small"),
-                                    "Kurz": st.column_config.TextColumn(width="small"),
-                                    "1 Year": st.column_config.LineChartColumn("1 Year", width="medium"),
-                                },
+                                column_config=build_table_column_config(
+                                    rates_df,
+                                    {
+                                        "Par": st.column_config.TextColumn(width="small", help=TABLE_COLUMN_HELP["Par"]),
+                                        "Kurz": st.column_config.TextColumn(width="small", help=TABLE_COLUMN_HELP["Kurz"]),
+                                        "1 Year": st.column_config.LineChartColumn("1 Year", width="medium", help=TABLE_COLUMN_HELP["1 Year"]),
+                                    },
+                                ),
                             )
                     except Exception:
                         st.info("Kurzy se nepodarilo nacist.")

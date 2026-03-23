@@ -1,0 +1,26 @@
+ticker,company,yfinance_ticker,earnings_date,earnings_time,eps_estimate,revenue_estimate,eps_actual,revenue_actual,eps_surprise_pct,revenue_surprise_pct,status,source,is_manual_override,note,updated_at
+MA,Mastercard Inc,MA,2026-04-30,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+AMZN,Amazon.com Inc,AMZN,2026-04-30,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+MSFT,Microsoft Corp,MSFT,2026-04-29,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+SPGI,S&P Global Inc,SPGI,2026-04-28,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+AMD,Advanced Micro Devices,AMD,2026-05-05,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+NVO,Novo Nordisk A/S,NVO,2026-05-06,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+JD,JD.com Inc,JD,2026-05-07,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+DUOL,Duolingo Inc,DUOL,2026-04-29,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+GOOGL,Alphabet Inc Class A,GOOGL,2026-04-23,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+LRCX,Lam Research Corp,LRCX,2026-04-22,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+IWDA,iShares Core MSCI World ETF,IWDA.AS,,TBD,,,,,,,Bez dat,auto,False,,2026-03-23 14:43
+META,Meta Platforms Inc,META,2026-04-29,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+TTD,Trade Desk Inc,TTD,2026-05-07,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+S,SentinelOne Inc,S,2026-05-27,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+NOW,ServiceNow Inc,NOW,2026-04-22,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+BY6,BYD Ord Shs H,BY6.F,2026-03-27,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+SOFI,SoFi Technologies Inc,SOFI,2026-04-28,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+NU,Nu Holdings Ltd,NU,2026-05-14,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+HOOD,Robinhood Markets Inc,HOOD,2026-04-29,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+CEZ,CEZ AS,CEZ.PR,2026-05-14,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+V,Visa Inc,V,2026-04-28,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+BTG,B2Gold Corp,BTG,2026-05-06,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+NFLX,Netflix Inc,NFLX,2026-04-16,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+ANET,Arista Networks Inc,ANET,2026-05-05,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
+PLTR,Palantir Technologies Inc,PLTR,2026-05-04,TBD,,,,,,,Ceka se,auto,False,,2026-03-23 14:43
